@@ -11,6 +11,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Cd,
+    Save,
 }
 
 fn main() {
@@ -19,7 +20,13 @@ fn main() {
         Commands::Cd => {
             println!(
                 "{:?}",
-                String::from_utf8(git::get_current_head_name().unwrap()).unwrap()
+                git::GitRepo::new(".").unwrap().get_current_head_name()
+            )
+        }
+        Commands::Save => {
+            println!(
+                "{:?}",
+                git::GitRepo::new(".").unwrap().save("tmp/autosave", "auto")
             )
         }
     }
