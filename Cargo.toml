@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 git2 = "0.18"
-notify = "6"
+notify = { version = "6", features = ["serde"] }
