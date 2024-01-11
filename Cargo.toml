@@ -1,9 +1,13 @@
 [package]
 name = "autosave"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["cordx56 <cordx56@cordx.cx>"]
+description = "Auto save changed file to local Git repo as commit"
+readme = "README.md"
+repository = "https://github.com/cordx56/autosave"
+license = "GPL-3.0-or-later"
+keywords = ["git", "backup"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
