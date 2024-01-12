@@ -1,5 +1,5 @@
 use git2::{
-    self, Branch, BranchType, Diff, DiffOptions, ErrorCode, IndexAddOption, IndexEntry, Oid,
+    self, Branch, BranchType, Diff, DiffOptions, ErrorCode, Index, IndexAddOption, IndexEntry, Oid,
     Reference, Repository, RepositoryState, ResetType,
 };
 
@@ -12,6 +12,7 @@ pub enum GitError {
     Commit(&'static str, u32, git2::Error),
     Add(&'static str, u32, git2::Error),
     Diff(&'static str, u32, git2::Error),
+    Merge(&'static str, u32, git2::Error),
     Unknown(&'static str, u32, git2::Error),
 }
 
@@ -173,6 +174,86 @@ impl GitRepo {
         }
     }
 
+    pub fn get_ref_ref_diff(
+        &self,
+        ref1: &Reference<'_>,
+        ref2: &Reference<'_>,
+    ) -> Result<Diff<'_>, GitError> {
+        let tree1 = ref1
+            .peel_to_tree()
+            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+        let tree2 = ref2
+            .peel_to_tree()
+            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+        self.0
+            .diff_tree_to_tree(
+                Some(&tree1),
+                Some(&tree2),
+                Some(
+                    DiffOptions::new()
+                        .include_untracked(true)
+                        .recurse_untracked_dirs(true),
+                ),
+            )
+            .map_err(|e| GitError::Diff(file!(), line!(), e))
+    }
+    pub fn merge(
+        &self,
+        our: &Reference<'_>,
+        their: &Reference<'_>,
+        message: impl AsRef<str>,
+    ) -> Result<Oid, GitError> {
+        let oc = our
+            .peel_to_commit()
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let tc = their
+            .peel_to_commit()
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let base = self
+            .0
+            .merge_base(oc.id(), tc.id())
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let ancestor = self
+            .0
+            .find_tree(base)
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let ot = our
+            .peel_to_tree()
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let tt = their
+            .peel_to_tree()
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let mut index = self
+            .0
+            .merge_trees(&ancestor, &ot, &tt, None)
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        //index
+        //    .write()
+        //    .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+        let commit = self.commit(Some(index), our, message)?;
+        self.0
+            .cleanup_state()
+            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+        Ok(commit)
+    }
+    pub fn merge_head(
+        &self,
+        branch: impl AsRef<str>,
+        message: impl AsRef<str>,
+    ) -> Result<(), GitError> {
+        let head = self.head()?;
+        if let Some(branch) = self.get_branch(branch)? {
+            let diff = self.get_ref_ref_diff(&head, branch.get())?;
+            let stats = diff
+                .stats()
+                .map_err(|e| GitError::Diff(file!(), line!(), e))?;
+            if stats.files_changed() == 0 {
+                self.merge(branch.get(), &head, message)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn backup_index(&self) -> Result<Vec<IndexEntry>, GitError> {
         let index = self
             .0
@@ -201,13 +282,17 @@ impl GitRepo {
 
     pub fn commit(
         &self,
-        reference: &Reference<'_>,
+        index: Option<Index>,
+        parent: &Reference<'_>,
         message: impl AsRef<str>,
     ) -> Result<Oid, GitError> {
-        let mut index = self
-            .0
-            .index()
-            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+        let mut index = match index {
+            Some(i) => i,
+            None => self
+                .0
+                .index()
+                .map_err(|e| GitError::Unknown(file!(), line!(), e))?,
+        };
         let tree_oid = index
             .write_tree()
             .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
@@ -227,7 +312,7 @@ impl GitRepo {
                 &sig,
                 message.as_ref(),
                 &tree,
-                &[&reference
+                &[&parent
                     .peel_to_commit()
                     .map_err(|e| GitError::Unknown(file!(), line!(), e))?],
             )
@@ -252,9 +337,11 @@ impl GitRepo {
         let current_head = self.get_current_head_name()?;
         let current_index_entries = self.backup_index()?;
 
-        let branch_ref = self.change_head_branch(name, "")?;
+        let _ = self.merge_head(&name, &commit_message);
+
+        let branch_ref = self.change_head_branch(&name, "")?;
         self.add_cwd_all()?;
-        self.commit(&branch_ref, commit_message)?;
+        self.commit(None, &branch_ref, &commit_message)?;
         self.change_head_ref(&current_head, "")?;
 
         self.restore_index(current_index_entries)?;
