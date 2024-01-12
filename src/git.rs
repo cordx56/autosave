@@ -138,9 +138,8 @@ impl GitRepo {
         }
     }
 
-    pub fn get_branch_workdir_diff(&self, branch: Branch) -> Result<Diff<'_>, GitError> {
-        let tree = branch
-            .get()
+    pub fn get_ref_workdir_diff(&self, reference: &Reference<'_>) -> Result<Diff<'_>, GitError> {
+        let tree = reference
             .peel_to_tree()
             .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
         self.0
@@ -155,8 +154,16 @@ impl GitRepo {
             .map_err(|e| GitError::Diff(file!(), line!(), e))
     }
     pub fn is_saved(&self, branch: impl AsRef<str>) -> Result<bool, GitError> {
+        let head = self.head()?;
+        let diff = self.get_ref_workdir_diff(&head)?;
+        let stats = diff
+            .stats()
+            .map_err(|e| GitError::Diff(file!(), line!(), e))?;
+        if stats.files_changed() == 0 {
+            return Ok(true);
+        }
         if let Some(branch) = self.get_branch(branch)? {
-            let diff = self.get_branch_workdir_diff(branch)?;
+            let diff = self.get_ref_workdir_diff(branch.get())?;
             let stats = diff
                 .stats()
                 .map_err(|e| GitError::Diff(file!(), line!(), e))?;
@@ -167,7 +174,7 @@ impl GitRepo {
     }
 
     pub fn backup_index(&self) -> Result<Vec<IndexEntry>, GitError> {
-        let mut index = self
+        let index = self
             .0
             .index()
             .map_err(|e| GitError::Unknown(file!(), line!(), e))?;

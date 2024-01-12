@@ -1,4 +1,5 @@
 mod cd;
+mod config;
 mod git;
 mod watcher;
 use clap::{Parser, Subcommand};
@@ -18,8 +19,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Cd,
-    Save { path: Option<String> },
-    Run { path: Option<String> },
+    Save {
+        path: Option<String>,
+    },
+    Run {
+        path: Option<String>,
+        config: Option<String>,
+    },
 }
 
 fn main() {
@@ -35,10 +41,10 @@ fn main() {
             let p = path.unwrap_or(".".to_string());
             git::GitRepo::new(&p).unwrap().save("tmp/autosave", "auto");
         }
-        Commands::Run { path } => {
+        Commands::Run { path, config } => {
             let p = path.unwrap_or(".".to_string());
-            let mut repo_watcher =
-                watcher::RepoWatcher::new(&p, "tmp/autosave", "auto save").unwrap();
+            let c = config::Config::default();
+            let mut repo_watcher = watcher::RepoWatcher::new(&p, &c.branch(), c.message()).unwrap();
             repo_watcher.watch().unwrap();
             loop {}
         }
