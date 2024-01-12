@@ -3,6 +3,8 @@ mod config;
 mod git;
 mod watcher;
 use clap::{Parser, Subcommand};
+use config::Config;
+use watcher::RepoWatcher;
 
 #[derive(Debug)]
 pub enum Error {
@@ -18,10 +20,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Cd,
-    Save {
-        path: Option<String>,
-    },
     Run {
         path: Option<String>,
         config: Option<String>,
@@ -31,21 +29,15 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Cd => {
-            println!(
-                "{:?}",
-                git::GitRepo::new(".").unwrap().get_current_head_name()
-            )
-        }
-        Commands::Save { path } => {
-            let p = path.unwrap_or(".".to_string());
-            git::GitRepo::new(&p).unwrap().save("tmp/autosave", "auto");
-        }
         Commands::Run { path, config } => {
             let p = path.unwrap_or(".".to_string());
-            let c = config::Config::default();
-            let mut repo_watcher = watcher::RepoWatcher::new(&p, &c.branch(), c.message()).unwrap();
-            repo_watcher.watch().unwrap();
+            let conf = if let Some(cp) = config {
+                Config::from_file_path(cp)
+            } else {
+                Config::from_dir_path(&p, ".autosave.toml")
+            }
+            .unwrap();
+            let _watcher = RepoWatcher::new(&p, conf).unwrap();
             loop {}
         }
     }

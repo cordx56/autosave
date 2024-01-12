@@ -1,36 +1,30 @@
+use crate::config::Config;
 use crate::git::GitRepo;
 use crate::Error;
 use notify::{recommended_watcher, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
 
-pub struct RepoWatcher {
-    watcher: RecommendedWatcher,
-    path: String,
-}
+pub struct RepoWatcher(RecommendedWatcher);
 
 impl RepoWatcher {
-    pub fn new(
-        path: impl ToString,
-        branch: impl ToString,
-        message: impl ToString,
-    ) -> Result<Self, Error> {
+    pub fn new(path: impl ToString, conf: Config) -> Result<Self, Error> {
         let p = path.to_string();
-        let b = branch.to_string();
-        let m = message.to_string();
-        let repo = GitRepo::new(&p).map_err(|e| Error::GitError(e))?;
-        let watcher = recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
-            if let Ok(ev) = result {
-                if ev.kind.is_create() || ev.kind.is_modify() || ev.kind.is_remove() {
-                    let _ = repo.save(&b, &m);
+        let branch = conf.branch();
+        let message = conf.message();
+        let mut watcher =
+            recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
+                if let Ok(ev) = result {
+                    if ev.kind.is_create() || ev.kind.is_modify() || ev.kind.is_remove() {
+                        if let Ok(repo) = GitRepo::new(&p) {
+                            let _ = repo.save(&branch, &message);
+                        }
+                    }
                 }
-            }
-        })
-        .map_err(|e| Error::WatchError(e))?;
-        Ok(Self { watcher, path: p })
-    }
-    pub fn watch(&mut self) -> Result<(), Error> {
-        self.watcher
-            .watch(Path::new(&self.path), RecursiveMode::Recursive)
-            .map_err(|e| Error::WatchError(e))
+            })
+            .map_err(|e| Error::WatchError(e))?;
+        watcher
+            .watch(Path::new(&path.to_string()), RecursiveMode::Recursive)
+            .map_err(|e| Error::WatchError(e))?;
+        Ok(Self(watcher))
     }
 }
