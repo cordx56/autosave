@@ -209,7 +209,7 @@ impl GitRepo {
         let tc = their
             .peel_to_commit()
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
-        if oc.id() != tc.id() {
+        if oc.id() == tc.id() {
             return Ok(None);
         }
         let base_oid = self
@@ -236,17 +236,17 @@ impl GitRepo {
         self.0
             .set_index(&mut index)
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
-        let commit = self.commit(Some(index), our, message)?;
+        let commit = self.commit(&[their, our], message)?;
         self.0
             .cleanup_state()
-            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
         Ok(Some(commit))
     }
     pub fn merge_head(
         &self,
         branch: impl AsRef<str>,
         message: impl AsRef<str>,
-    ) -> Result<(), GitError> {
+    ) -> Result<Option<Oid>, GitError> {
         let head = self.head()?;
         if let Some(branch) = self.get_branch(branch)? {
             let diff = self.get_ref_ref_diff(&head, branch.get())?;
@@ -254,11 +254,11 @@ impl GitRepo {
                 .stats()
                 .map_err(|e| GitError::Diff(file!(), line!(), e))?;
             if stats.files_changed() == 0 {
-                println!("merge");
-                self.merge(branch.get(), &head, message)?;
+                let c = self.merge(branch.get(), &head, message)?;
+                return Ok(c);
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     pub fn backup_index(&self) -> Result<Vec<IndexEntry>, GitError> {
@@ -289,40 +289,35 @@ impl GitRepo {
 
     pub fn commit(
         &self,
-        index: Option<Index>,
-        parent: &Reference<'_>,
+        parents: &[&Reference<'_>],
         message: impl AsRef<str>,
     ) -> Result<Oid, GitError> {
-        let mut index = match index {
-            Some(i) => i,
-            None => self
-                .0
-                .index()
-                .map_err(|e| GitError::Unknown(file!(), line!(), e))?,
-        };
+        let mut index = self
+            .0
+            .index()
+            .map_err(|e| GitError::Commit(file!(), line!(), e))?;
         let tree_oid = index
             .write_tree()
-            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+            .map_err(|e| GitError::Commit(file!(), line!(), e))?;
         let tree = self
             .0
             .find_tree(tree_oid)
-            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+            .map_err(|e| GitError::Commit(file!(), line!(), e))?;
         let sig = self
             .0
             .signature()
-            .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+            .map_err(|e| GitError::Commit(file!(), line!(), e))?;
+        let parents = parents
+            .into_iter()
+            .map(|c| {
+                c.peel_to_commit()
+                    .map_err(|e| GitError::Commit(file!(), line!(), e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let parents = parents.iter().collect::<Vec<_>>();
         let commit = self
             .0
-            .commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                message.as_ref(),
-                &tree,
-                &[&parent
-                    .peel_to_commit()
-                    .map_err(|e| GitError::Unknown(file!(), line!(), e))?],
-            )
+            .commit(Some("HEAD"), &sig, &sig, message.as_ref(), &tree, &parents)
             .map_err(|e| GitError::Commit(file!(), line!(), e))?;
         Ok(commit)
     }
@@ -344,12 +339,14 @@ impl GitRepo {
         let current_head = self.get_current_head_name()?;
         let current_index_entries = self.backup_index()?;
 
-        let r = self.merge_head(&name, &commit_message);
-        println!("{:?}", r);
+        // Merge current_branch into backup branch
+        // if there are no diffs
+        self.merge_head(&name, &commit_message)?;
 
+        // Change branch
         let branch_ref = self.change_head_branch(&name, "")?;
         self.add_cwd_all()?;
-        self.commit(None, &branch_ref, &commit_message)?;
+        self.commit(&[&branch_ref], &commit_message)?;
         self.change_head_ref(&current_head, "")?;
 
         self.restore_index(current_index_entries)?;
