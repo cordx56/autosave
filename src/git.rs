@@ -202,20 +202,26 @@ impl GitRepo {
         our: &Reference<'_>,
         their: &Reference<'_>,
         message: impl AsRef<str>,
-    ) -> Result<Oid, GitError> {
+    ) -> Result<Option<Oid>, GitError> {
         let oc = our
             .peel_to_commit()
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
         let tc = their
             .peel_to_commit()
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
-        let base = self
+        if oc.id() != tc.id() {
+            return Ok(None);
+        }
+        let base_oid = self
             .0
             .merge_base(oc.id(), tc.id())
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
-        let ancestor = self
+        let base_commit = self
             .0
-            .find_tree(base)
+            .find_commit(base_oid)
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let ancestor = base_commit
+            .tree()
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
         let ot = our
             .peel_to_tree()
@@ -227,14 +233,14 @@ impl GitRepo {
             .0
             .merge_trees(&ancestor, &ot, &tt, None)
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
-        //index
-        //    .write()
-        //    .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+        self.0
+            .set_index(&mut index)
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
         let commit = self.commit(Some(index), our, message)?;
         self.0
             .cleanup_state()
             .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
-        Ok(commit)
+        Ok(Some(commit))
     }
     pub fn merge_head(
         &self,
@@ -248,6 +254,7 @@ impl GitRepo {
                 .stats()
                 .map_err(|e| GitError::Diff(file!(), line!(), e))?;
             if stats.files_changed() == 0 {
+                println!("merge");
                 self.merge(branch.get(), &head, message)?;
             }
         }
@@ -337,7 +344,8 @@ impl GitRepo {
         let current_head = self.get_current_head_name()?;
         let current_index_entries = self.backup_index()?;
 
-        let _ = self.merge_head(&name, &commit_message);
+        let r = self.merge_head(&name, &commit_message);
+        println!("{:?}", r);
 
         let branch_ref = self.change_head_branch(&name, "")?;
         self.add_cwd_all()?;
