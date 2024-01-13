@@ -230,6 +230,10 @@ impl GitRepo {
         let tt = their
             .peel_to_tree()
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        let mut before_index = self
+            .0
+            .index()
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
         let mut index = self
             .0
             .merge_trees(&ancestor, &ot, &tt, None)
@@ -241,23 +245,29 @@ impl GitRepo {
         self.0
             .cleanup_state()
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+        self.0
+            .set_index(&mut before_index)
+            .map_err(|e| GitError::Merge(file!(), line!(), e))?;
         Ok(Some(commit))
     }
     /// Merge ref to HEAD if there are no diffs
     pub fn auto_merge(
         &self,
-        branch_name: impl AsRef<str>,
+        from: &ReferenceName,
         message: impl AsRef<str>,
     ) -> Result<Option<Oid>, GitError> {
-        let head = self.head()?;
-        if let Some(branch) = self.get_branch(&branch_name)? {
-            let branch = branch.get();
-            let diff = self.get_ref_ref_diff(branch, &head)?;
+        if let ReferenceName::Branch(branch_ref) = from {
+            let branch = self
+                .0
+                .find_reference(branch_ref)
+                .map_err(|e| GitError::Merge(file!(), line!(), e))?;
+            let head = self.head()?;
+            let diff = self.get_ref_ref_diff(&head, &branch)?;
             let stats = diff
                 .stats()
                 .map_err(|e| GitError::Diff(file!(), line!(), e))?;
             if stats.files_changed() == 0 {
-                let c = self.merge(&head, branch, message)?;
+                let c = self.merge(&branch, &head, message)?;
                 return Ok(c);
             }
         }
@@ -335,7 +345,8 @@ impl GitRepo {
         let current_head = self.get_current_head_name()?;
         let current_index_entries = self.backup_index()?;
 
-        self.auto_merge(&branch_name, &commit_message)?;
+        self.change_head_branch(&branch_name, "")?;
+        self.auto_merge(&current_head, &commit_message)?;
 
         let branch_ref = self.change_head_branch(&branch_name, "")?;
         let parent_commit = branch_ref

@@ -1,4 +1,3 @@
-mod cd;
 mod config;
 mod git;
 mod watcher;
