@@ -176,19 +176,19 @@ impl GitRepo {
 
     pub fn get_ref_ref_diff(
         &self,
-        ref1: &Reference<'_>,
-        ref2: &Reference<'_>,
+        old: &Reference<'_>,
+        new: &Reference<'_>,
     ) -> Result<Diff<'_>, GitError> {
-        let tree1 = ref1
+        let old = old
             .peel_to_tree()
             .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
-        let tree2 = ref2
+        let new = new
             .peel_to_tree()
             .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
         self.0
             .diff_tree_to_tree(
-                Some(&tree1),
-                Some(&tree2),
+                Some(&old),
+                Some(&new),
                 Some(
                     DiffOptions::new()
                         .include_untracked(true)
@@ -197,6 +197,7 @@ impl GitRepo {
             )
             .map_err(|e| GitError::Diff(file!(), line!(), e))
     }
+    /// Merge two refs
     pub fn merge(
         &self,
         our: &Reference<'_>,
@@ -242,25 +243,26 @@ impl GitRepo {
             .map_err(|e| GitError::Merge(file!(), line!(), e))?;
         Ok(Some(commit))
     }
-    pub fn merge_head(
+    /// Merge ref to HEAD if there are no diffs
+    pub fn auto_merge(
         &self,
-        branch: impl AsRef<str>,
+        reference: &Reference<'_>,
         message: impl AsRef<str>,
     ) -> Result<Option<Oid>, GitError> {
         let head = self.head()?;
-        if let Some(branch) = self.get_branch(branch)? {
-            let diff = self.get_ref_ref_diff(&head, branch.get())?;
-            let stats = diff
-                .stats()
-                .map_err(|e| GitError::Diff(file!(), line!(), e))?;
-            if stats.files_changed() == 0 {
-                let c = self.merge(branch.get(), &head, message)?;
-                return Ok(c);
-            }
+        let diff = self.get_ref_ref_diff(reference, &head)?;
+        let stats = diff
+            .stats()
+            .map_err(|e| GitError::Diff(file!(), line!(), e))?;
+        if stats.files_changed() == 0 {
+            let c = self.merge(&head, reference, message)?;
+            Ok(c)
+        } else {
+            Ok(None)
         }
-        Ok(None)
     }
 
+    /// Backup current index to entries
     pub fn backup_index(&self) -> Result<Vec<IndexEntry>, GitError> {
         let index = self
             .0
@@ -268,6 +270,7 @@ impl GitRepo {
             .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
         Ok(index.iter().collect())
     }
+    /// Restore index from entries
     pub fn restore_index(
         &self,
         entries: impl IntoIterator<Item = IndexEntry>,
@@ -287,6 +290,7 @@ impl GitRepo {
         Ok(())
     }
 
+    /// Create new commit
     pub fn commit(
         &self,
         parents: &[&Reference<'_>],
@@ -322,29 +326,35 @@ impl GitRepo {
         Ok(commit)
     }
 
+    /// Save current working directory to specified branch
     pub fn save(
         &self,
-        name: impl AsRef<str>,
+        branch_name: impl AsRef<str>,
         commit_message: impl AsRef<str>,
     ) -> Result<(), GitError> {
         let state = self.0.state();
         if state != RepositoryState::Clean {
-            return Err(GitError::BadState(file!(), line!(), state));
+            return Ok(());
+            //return Err(GitError::BadState(file!(), line!(), state));
         }
 
-        if self.is_saved(&name)? {
+        if self.is_saved(&branch_name)? {
             return Ok(());
         }
 
         let current_head = self.get_current_head_name()?;
         let current_index_entries = self.backup_index()?;
 
-        // Merge current_branch into backup branch
-        // if there are no diffs
-        self.merge_head(&name, &commit_message)?;
+        let branch_ref = self.change_head_branch(&branch_name, "")?;
 
-        // Change branch
-        let branch_ref = self.change_head_branch(&name, "")?;
+        if let ReferenceName::Branch(branch_ref_name) = &current_head {
+            let branch = self
+                .0
+                .find_reference(branch_ref_name)
+                .map_err(|e| GitError::Unknown(file!(), line!(), e))?;
+            self.auto_merge(&branch, &commit_message)?;
+        }
+
         self.add_cwd_all()?;
         self.commit(&[&branch_ref], &commit_message)?;
         self.change_head_ref(&current_head, "")?;

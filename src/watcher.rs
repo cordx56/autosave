@@ -16,7 +16,7 @@ impl RepoWatcher {
                 if let Ok(ev) = result {
                     if ev.kind.is_create() || ev.kind.is_modify() || ev.kind.is_remove() {
                         if let Ok(repo) = GitRepo::new(&p) {
-                            let _ = repo.save(&branch, &message);
+                            repo.save(&branch, &message).unwrap();
                         }
                     }
                 }
