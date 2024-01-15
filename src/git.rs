@@ -16,15 +16,18 @@ pub enum GitError {
     Unknown(&'static str, u32, git2::Error),
 }
 
+/// Reference name object
 #[derive(Debug)]
 pub enum ReferenceName {
     Branch(String),
     Commit(Oid),
 }
 
+/// Git repository object
 pub struct GitRepo(Repository);
 
 impl GitRepo {
+    /// Create new repository object
     pub fn new(dir: impl AsRef<str>) -> Result<Self, GitError> {
         let repo = Repository::open(dir.as_ref()).map_err(|e| {
             let code = e.code();
@@ -331,11 +334,11 @@ impl GitRepo {
         &self,
         branch_name: impl AsRef<str>,
         commit_message: impl AsRef<str>,
+        merge_message: impl AsRef<str>,
     ) -> Result<(), GitError> {
         let state = self.0.state();
         if state != RepositoryState::Clean {
             return Ok(());
-            //return Err(GitError::BadState(file!(), line!(), state));
         }
 
         if self.is_saved(&branch_name)? {
@@ -346,7 +349,7 @@ impl GitRepo {
         let current_index_entries = self.backup_index()?;
 
         self.change_head_branch(&branch_name, "")?;
-        self.auto_merge(&current_head, &commit_message)?;
+        self.auto_merge(&current_head, &merge_message)?;
 
         let branch_ref = self.change_head_branch(&branch_name, "")?;
         let parent_commit = branch_ref

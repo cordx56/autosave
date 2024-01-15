@@ -8,10 +8,14 @@ pub enum ConfigError {
     Format(toml::de::Error),
 }
 
+/// Configuration object
+///
+/// Config file is deserialized to this object
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     branch: Option<String>,
-    message: Option<String>,
+    commit_message: Option<String>,
+    merge_message: Option<String>,
 }
 
 impl Config {
@@ -38,10 +42,21 @@ impl Config {
             }
         }
     }
+
+    /// Get branch name
     pub fn branch(&self) -> String {
         self.branch.clone().unwrap_or("tmp/autosave".to_string())
     }
-    pub fn message(&self) -> String {
-        self.message.clone().unwrap_or("auto save".to_string())
+    /// Get commit message
+    pub fn commit_message(&self) -> String {
+        self.commit_message
+            .clone()
+            .unwrap_or("auto save".to_string())
+    }
+    /// Get merge message
+    pub fn merge_message(&self) -> String {
+        self.merge_message
+            .clone()
+            .unwrap_or("auto merge".to_string())
     }
 }
