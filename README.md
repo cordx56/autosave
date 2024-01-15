@@ -9,6 +9,10 @@ The author is not responsible for any data loss.
 Please backup your local changes to remote repository frequently.
 And if you found any bugs, please report it as an issue.
 
+## Install
+
+Run `git clone https://github.com/cordx56/autosave`, `cd autosave` and `cargo install --path .`!
+
 ## License
 
 Copyright (C) 2023  cordx56
