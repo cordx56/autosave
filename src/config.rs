@@ -1,12 +1,7 @@
+use anyhow::{Context as _, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
-
-#[derive(Debug)]
-pub enum ConfigError {
-    Io(std::io::Error),
-    Format(toml::de::Error),
-}
 
 /// Configuration object
 ///
@@ -19,16 +14,14 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_file_path(p: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let s = fs::read_to_string(p).map_err(|e| ConfigError::Io(e))?;
-        let c = toml::from_str(&s).map_err(|e| ConfigError::Format(e))?;
+    pub fn from_file_path(p: impl AsRef<Path>) -> Result<Self> {
+        let s = fs::read_to_string(p.as_ref())
+            .with_context(|| format!("Config file read error: {}", p.as_ref().display()))?;
+        let c = toml::from_str(&s).context("Config file format error")?;
         Ok(c)
     }
-    pub fn from_dir_path(
-        p: impl AsRef<Path>,
-        file_name: impl AsRef<Path>,
-    ) -> Result<Self, ConfigError> {
-        let mut path = fs::canonicalize(p).map_err(|e| ConfigError::Io(e))?;
+    pub fn from_dir_path(p: impl AsRef<Path>, file_name: impl AsRef<Path>) -> Result<Self> {
+        let mut path = fs::canonicalize(p).context("Failed to get absolute path")?;
         let f = file_name.as_ref();
         loop {
             let file_path = path.join(f);

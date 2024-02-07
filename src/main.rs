@@ -1,15 +1,10 @@
 mod config;
 mod git;
 mod watcher;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::Config;
 use watcher::RepoWatcher;
-
-#[derive(Debug)]
-pub enum Error {
-    WatchError(notify::Error),
-    GitError(git::GitError),
-}
 
 #[derive(Parser)]
 struct Cli {
@@ -25,7 +20,8 @@ enum Commands {
     },
 }
 
-fn main() {
+fn main() -> Result<()> {
+    env_logger::init();
     let cli = Cli::parse();
     match cli.command {
         Commands::Run { path, config } => {
