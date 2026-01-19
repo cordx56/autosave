@@ -1,7 +1,16 @@
-# autosave
+<div align="center">
+    <h1>
+        💾
+        <br>
+        autosave
+    </h1>
+    <p>
+        Automatically save all your changes to the repository
+    </p>
+</div>
 
-Watch file changes and save changed file to local Git repository as a commit automatically.
-By default, changes are saved as "auto commit" to the "tmp/autosave" branch.
+autosave watches file changes and automatically saves changed file to local Git repository as a commit.
+By default, changes are saved as `autosave commit` to the `tmp/autosave` branch.
 
 ## Warning!
 
@@ -9,23 +18,40 @@ The author is not responsible for any data loss.
 Please backup your local changes to remote repository frequently.
 And if you found any bugs, please report it as an issue.
 
+## Usage
+
+To watch changes and save current repository automatically:
+
+```bash
+autosave
+```
+
+To list current watch list:
+
+```bash
+autosave list
+```
+
+To remove path from watch list:
+
+```bash
+autosave remove -p [path]
+```
+
+Add below line to your shell rc file (e.g. `.bashrc`) to start `autosave` daemon automatically:
+
+```bash
+(command -v autosave && autosave list) > /dev/null
+```
+
 ## Install
 
-Run `git clone https://github.com/cordx56/autosave`, `cd autosave` and `cargo install --path .`!
+```
+cargo install autosave --locked
+```
 
 ## License
 
-Copyright (C) 2023  cordx56
+Copyright (C) 2023 cordx56
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
+This project is distributed under the MPL 2.0 license.
