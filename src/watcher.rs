@@ -22,20 +22,16 @@ impl RepoWatcher {
         let last_edit = Arc::new(Mutex::new(SystemTime::now()));
         let mut watcher =
             recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
-                let branch = conf.branch();
-                let commit_message = conf.commit_message();
-                let merge_message = conf.merge_message();
-                let delay = conf.delay();
-
                 if let Ok(ev) = result
                     && (ev.kind.is_create() || ev.kind.is_modify() || ev.kind.is_remove())
                 {
+                    let branch = conf.branch.clone();
+                    let commit_message = conf.commit_message.clone();
+                    let merge_message = conf.merge_message.clone();
+                    let delay = conf.delay;
+
                     let path_buf = path_buf.clone();
                     let last_edit = last_edit.clone();
-
-                    let branch = branch.to_string();
-                    let commit_message = commit_message.to_string();
-                    let merge_message = merge_message.to_string();
 
                     let now = SystemTime::now();
                     *last_edit.lock().unwrap() = now;

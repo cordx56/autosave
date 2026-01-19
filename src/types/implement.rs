@@ -28,21 +28,25 @@ impl ApiState {
                 data
             }
         };
-        let watch_list: anyhow::Result<types::WatchList> = data
+        let watch_list: types::WatchList = data
             .paths
             .into_iter()
-            .map(|(k, v)| {
-                Ok((
-                    k.clone(),
-                    types::WatchListEntry {
-                        config: v.config.clone(),
-                        watcher: watcher::RepoWatcher::new(&k, v.config)?,
-                    },
-                ))
+            .filter_map(|(k, v)| {
+                watcher::RepoWatcher::new(&k, v.config.clone())
+                    .map(|watcher| {
+                        (
+                            k.clone(),
+                            types::WatchListEntry {
+                                config: v.config,
+                                watcher,
+                            },
+                        )
+                    })
+                    .ok()
             })
             .collect();
         Ok(Self {
-            watch_list: Arc::new(Mutex::new(watch_list?)),
+            watch_list: Arc::new(Mutex::new(watch_list)),
         })
     }
     /// write current watch list state into file
