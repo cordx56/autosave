@@ -118,6 +118,14 @@ pub fn do_worktree(
 
     let _ = tty_tcsetpgrp(unistd::getpgrp());
 
+    change_watch_list(types::ChangeWatchRequest::Remove {
+        path: worktree_path.clone(),
+    })
+    .context("failed to remove worktree from watch list")?;
+    git::GitRepo::new(&worktree_path)
+        .context("failed to open Git worktree")?
+        .remove_worktree()?;
+
     Ok(code)
 }
 

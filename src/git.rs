@@ -1,7 +1,8 @@
 use anyhow::{Context as _, anyhow};
 use git2::{
     self, Branch, BranchType, Commit, Diff, DiffOptions, ErrorCode, Index, IndexAddOption,
-    IndexEntry, Oid, Reference, Repository, RepositoryState, ResetType,
+    IndexEntry, Oid, Reference, Repository, RepositoryState, ResetType, Worktree,
+    WorktreePruneOptions,
 };
 use std::path::Path;
 use thiserror::Error;
@@ -393,5 +394,12 @@ impl GitRepo {
             .worktree(branch_name.as_ref(), path.as_ref(), None)
             .context("failed to add new worktree")?;
         Ok(())
+    }
+    /// Remove Git worktree at the specified path
+    pub fn remove_worktree(self) -> anyhow::Result<()> {
+        Worktree::open_from_repository(&self.0)
+            .context("failed to open worktree")?
+            .prune(Some(WorktreePruneOptions::new().working_tree(true)))
+            .context("failed to remove worktree")
     }
 }
