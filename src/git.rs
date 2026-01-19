@@ -2,8 +2,9 @@ use anyhow::{Context as _, anyhow};
 use git2::{
     self, Branch, BranchType, Commit, Diff, DiffOptions, ErrorCode, Index, IndexAddOption,
     IndexEntry, Oid, Reference, Repository, RepositoryState, ResetType, Worktree,
-    WorktreePruneOptions,
+    WorktreeAddOptions, WorktreePruneOptions,
 };
+use std::fs;
 use std::path::Path;
 use thiserror::Error;
 
@@ -385,20 +386,43 @@ impl GitRepo {
     }
 
     /// Add Git worktree at the specified path
+    ///
+    /// returns new worktree's name
     pub fn add_worktree(
         &self,
         branch_name: impl AsRef<str>,
         path: impl AsRef<Path>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<String> {
+        let name = path
+            .as_ref()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let branch = self.get_or_create_branch(&branch_name)?;
         self.0
-            .worktree(branch_name.as_ref(), path.as_ref(), None)
+            .worktree(
+                &name,
+                path.as_ref(),
+                Some(WorktreeAddOptions::new().reference(Some(&branch.into_reference()))),
+            )
             .context("failed to add new worktree")?;
-        Ok(())
+        Ok(name)
     }
     /// Remove Git worktree at the specified path
-    pub fn remove_worktree(self) -> anyhow::Result<()> {
-        Worktree::open_from_repository(&self.0)
-            .context("failed to open worktree")?
+    pub fn remove_worktree(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let repo = Self::new(&path).context("failed to open worktree repository")?;
+        let worktree =
+            Worktree::open_from_repository(&repo.0).context("failed to open worktree")?;
+        let name = worktree
+            .name()
+            .context("failed to get worktree name")?
+            .to_string();
+        drop(repo);
+        fs::remove_dir_all(path.as_ref()).context("failed to remove worktree dir")?;
+        self.0
+            .find_worktree(&name)
+            .context("failed to find worktree")?
             .prune(Some(WorktreePruneOptions::new().working_tree(true)))
             .context("failed to remove worktree")
     }
