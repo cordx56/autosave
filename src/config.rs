@@ -1,16 +1,27 @@
 use anyhow::{Context as _, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
 /// Configuration object
 ///
 /// Config file is deserialized to this object
-#[derive(Debug, Default, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
-    branch: Option<String>,
-    commit_message: Option<String>,
-    merge_message: Option<String>,
+    branch: String,
+    commit_message: String,
+    merge_message: String,
+    delay: u64,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            branch: "tmp/autosave".to_string(),
+            commit_message: "auto save".to_string(),
+            merge_message: "auto merge".to_string(),
+            delay: 3,
+        }
+    }
 }
 
 impl Config {
@@ -37,19 +48,18 @@ impl Config {
     }
 
     /// Get branch name
-    pub fn branch(&self) -> String {
-        self.branch.clone().unwrap_or("tmp/autosave".to_string())
+    pub fn branch(&self) -> &str {
+        &self.branch
     }
     /// Get commit message
-    pub fn commit_message(&self) -> String {
-        self.commit_message
-            .clone()
-            .unwrap_or("auto save".to_string())
+    pub fn commit_message(&self) -> &str {
+        &self.commit_message
     }
     /// Get merge message
-    pub fn merge_message(&self) -> String {
-        self.merge_message
-            .clone()
-            .unwrap_or("auto merge".to_string())
+    pub fn merge_message(&self) -> &str {
+        &self.merge_message
+    }
+    pub fn delay(&self) -> u64 {
+        self.delay
     }
 }

@@ -1,7 +1,7 @@
 [package]
 name = "autosave"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 authors = ["cordx56 <cordx56@cordx.cx>"]
 description = "Watch file changes and save changed file to local Git repository as a commit automatically"
 readme = "README.md"
@@ -13,9 +13,14 @@ keywords = ["git", "backup"]
 clap = { version = "4", features = ["derive"] }
 git2 = "0.18"
 notify = { version = "6", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 anyhow = "1"
 thiserror = "1"
-log = "0.4"
-env_logger = "0.11"
+daemonize = "0.5"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "io-util", "net", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json"] }

@@ -1,8 +1,9 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use git2::{
     self, Branch, BranchType, Commit, Diff, DiffOptions, ErrorCode, Index, IndexAddOption,
     IndexEntry, Oid, Reference, Repository, RepositoryState, ResetType,
 };
+use std::path::Path;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -25,8 +26,8 @@ pub struct GitRepo(Repository);
 
 impl GitRepo {
     /// Create new repository object
-    pub fn new(dir: impl AsRef<str>) -> Result<Self> {
-        let repo = Repository::open(dir.as_ref()).map_err(|e| {
+    pub fn new(dir: impl AsRef<Path>) -> Result<Self> {
+        let repo = Repository::open(dir).map_err(|e| {
             let code = e.code();
             if code == ErrorCode::NotFound {
                 anyhow!(GitError::NoRepository(e))
@@ -44,7 +45,7 @@ impl GitRepo {
             .context("Failed to get HEAD reference")
     }
 
-    fn get_branch(&self, name: impl AsRef<str>) -> Result<Option<Branch>> {
+    fn get_branch(&self, name: impl AsRef<str>) -> Result<Option<Branch<'_>>> {
         match self.0.find_branch(name.as_ref(), BranchType::Local) {
             Ok(b) => Ok(Some(b)),
             Err(e) => {
@@ -57,7 +58,7 @@ impl GitRepo {
             }
         }
     }
-    fn get_or_create_branch(&self, name: impl AsRef<str>) -> Result<Branch> {
+    fn get_or_create_branch(&self, name: impl AsRef<str>) -> Result<Branch<'_>> {
         match self.get_branch(&name)? {
             Some(b) => Ok(b),
             None => {

@@ -1,0 +1,112 @@
+use anyhow::Context as _;
+use clap::{Parser, Subcommand};
+use std::env;
+use std::path::PathBuf;
+use std::process::exit;
+
+use autosave::*;
+
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    List,
+    Remove {
+        #[arg(long, short)]
+        path: Option<PathBuf>,
+    },
+}
+
+fn main() {
+    // init tracing_subscriber
+    use tracing_subscriber::{
+        filter::{EnvFilter, LevelFilter},
+        prelude::*,
+    };
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::WARN.into())
+                .from_env_lossy(),
+        )
+        .boxed();
+    let (layer, reload_handle) = tracing_subscriber::reload::Layer::new(layer);
+    tracing_subscriber::registry().with(layer).init();
+
+    let daemon_check = match daemon::check_daemon() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("{e:?}");
+            exit(1);
+        }
+    };
+    if daemon_check {
+        tracing::info!("daemon is already running");
+    } else {
+        tracing::info!("daemon is not running; start daemon");
+        if let Err(e) = daemon::start_daemon(reload_handle) {
+            tracing::error!("{e:?}");
+            exit(1);
+        }
+    }
+
+    let current_dir = match env::current_dir().context("failed to get current dir") {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("{e:?}");
+            exit(1);
+        }
+    };
+
+    let parsed = Cli::parse();
+    match parsed.command {
+        None => {
+            tracing::info!("add current dir to the watch list");
+
+            let resp = client::change_watch_list(types::ChangeWatchRequest::Add {
+                path: current_dir,
+                config: config::Config::default(),
+            })
+            .context("failed to add current dir to watch list");
+            if let Err(e) = resp {
+                tracing::error!("{e:?}");
+                exit(1);
+            }
+            tracing::info!("current dir added to the watch list");
+        }
+        Some(Command::List) => {
+            tracing::info!("list current paths in the watch list");
+            let resp = client::get_watch_list().context("failed to get current watch list");
+            match resp {
+                Ok(paths) => {
+                    for path in paths {
+                        println!("{}", path.display());
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("{e:?}");
+                    exit(1);
+                }
+            }
+        }
+        Some(Command::Remove { path }) => {
+            let path = match path {
+                Some(v) => v,
+                None => current_dir,
+            };
+            tracing::info!("remove path from the watch list: {}", path.display());
+            let resp = client::change_watch_list(types::ChangeWatchRequest::Remove { path })
+                .context("failed to remove dir to watch list");
+            if let Err(e) = resp {
+                tracing::error!("{e:?}");
+                exit(1);
+            }
+            tracing::info!("successfully deleted the path from the watch list");
+        }
+    }
+}
