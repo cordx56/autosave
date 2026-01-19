@@ -18,6 +18,8 @@ enum Command {
     Remove {
         #[arg(long, short)]
         path: Option<PathBuf>,
+        #[arg(long)]
+        all: Option<bool>,
     },
 }
 
@@ -94,17 +96,30 @@ fn main() {
                 }
             }
         }
-        Some(Command::Remove { path }) => {
-            let path = match path {
-                Some(v) => v,
-                None => current_dir,
+        Some(Command::Remove { path, all }) => {
+            let paths = if all.unwrap_or(false) {
+                let resp = client::get_watch_list().context("failed to get current watch list");
+                match resp {
+                    Ok(paths) => paths,
+                    Err(e) => {
+                        tracing::error!("{e:?}");
+                        exit(1);
+                    }
+                }
+            } else {
+                match path {
+                    Some(v) => vec![v],
+                    None => vec![current_dir],
+                }
             };
-            tracing::info!("remove path from the watch list: {}", path.display());
-            let resp = client::change_watch_list(types::ChangeWatchRequest::Remove { path })
-                .context("failed to remove dir to watch list");
-            if let Err(e) = resp {
-                tracing::error!("{e:?}");
-                exit(1);
+            tracing::info!("remove path(s) from the watch list: {paths:?}");
+            for path in paths {
+                let resp = client::change_watch_list(types::ChangeWatchRequest::Remove { path })
+                    .context("failed to remove dir to watch list");
+                if let Err(e) = resp {
+                    tracing::error!("{e:?}");
+                    exit(1);
+                }
             }
             tracing::info!("successfully deleted the path from the watch list");
         }
