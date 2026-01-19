@@ -9,7 +9,7 @@
     </p>
 </div>
 
-autosave watches file changes and automatically saves changed file to local Git repository as a commit.
+autosave watches file changes and automatically saves changed file to the local Git repository as a commit.
 By default, changes are saved as `autosave commit` to the `tmp/autosave` branch.
 
 ## Warning!
@@ -26,16 +26,18 @@ To watch changes and save current repository automatically:
 autosave
 ```
 
+Once you added the repository, the repository will be watched until it is removed.
+
 To list current watch list:
 
 ```bash
 autosave list
 ```
 
-To remove path from watch list:
+To remove current repository from watch list:
 
 ```bash
-autosave remove -p [path]
+autosave remove
 ```
 
 Add below line to your shell rc file (e.g. `.bashrc`) to start `autosave` daemon automatically:
@@ -54,4 +56,4 @@ cargo install autosave --locked
 
 Copyright (C) 2023 cordx56
 
-This project is distributed under the MPL 2.0 license.
+This software is distributed under the MPL 2.0 license.

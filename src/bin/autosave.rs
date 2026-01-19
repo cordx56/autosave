@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueHint};
 use std::env;
 use std::path::PathBuf;
 use std::process::exit;
@@ -14,12 +14,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// List directories in watch list
     List,
+    /// Remove specified directory from watch list
     Remove {
-        #[arg(long, short)]
+        #[arg(long, short, value_hint = ValueHint::DirPath)]
         path: Option<PathBuf>,
-        #[arg(long)]
-        all: Option<bool>,
+        #[arg(long, help = "Remove all path from watch list")]
+        all: bool,
+    },
+    /// Run command in specified branch worktree
+    Run {
+        #[arg(short, long, help = "New branch name")]
+        branch: String,
+        #[arg(value_hint = ValueHint::CommandWithArguments, help = "Command to execute")]
+        args: Option<Vec<String>>,
     },
 }
 
@@ -39,6 +48,8 @@ fn main() {
         .boxed();
     let (layer, reload_handle) = tracing_subscriber::reload::Layer::new(layer);
     tracing_subscriber::registry().with(layer).init();
+
+    let parsed = Cli::parse();
 
     let daemon_check = match daemon::check_daemon() {
         Ok(v) => v,
@@ -65,7 +76,6 @@ fn main() {
         }
     };
 
-    let parsed = Cli::parse();
     match parsed.command {
         None => {
             tracing::info!("add current dir to the watch list");
@@ -97,7 +107,7 @@ fn main() {
             }
         }
         Some(Command::Remove { path, all }) => {
-            let paths = if all.unwrap_or(false) {
+            let paths = if all {
                 let resp = client::get_watch_list().context("failed to get current watch list");
                 match resp {
                     Ok(paths) => paths,
@@ -122,6 +132,25 @@ fn main() {
                 }
             }
             tracing::info!("successfully deleted the path from the watch list");
+        }
+        Some(Command::Run { branch, args }) => {
+            let args = match args {
+                Some(v) => v,
+                None => match env::var("SHELL") {
+                    Ok(v) => vec![v],
+                    Err(_) => {
+                        tracing::error!("$SHELL is not set");
+                        exit(1);
+                    }
+                },
+            };
+            match client::do_worktree(&args, &branch, &current_dir) {
+                Ok(v) => exit(v),
+                Err(e) => {
+                    tracing::error!("{e:?}");
+                    exit(1);
+                }
+            };
         }
     }
 }

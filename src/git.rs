@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, anyhow};
 use git2::{
     self, Branch, BranchType, Commit, Diff, DiffOptions, ErrorCode, Index, IndexAddOption,
     IndexEntry, Oid, Reference, Repository, RepositoryState, ResetType,
@@ -26,7 +26,7 @@ pub struct GitRepo(Repository);
 
 impl GitRepo {
     /// Create new repository object
-    pub fn new(dir: impl AsRef<Path>) -> Result<Self> {
+    pub fn new(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         let repo = Repository::open(dir).map_err(|e| {
             let code = e.code();
             if code == ErrorCode::NotFound {
@@ -38,14 +38,14 @@ impl GitRepo {
         Ok(Self(repo))
     }
 
-    fn head(&self) -> Result<Reference<'_>> {
+    fn head(&self) -> anyhow::Result<Reference<'_>> {
         self.0
             .head()
             .map_err(|e| anyhow!(GitError::Unknown(e)))
             .context("Failed to get HEAD reference")
     }
 
-    fn get_branch(&self, name: impl AsRef<str>) -> Result<Option<Branch<'_>>> {
+    fn get_branch(&self, name: impl AsRef<str>) -> anyhow::Result<Option<Branch<'_>>> {
         match self.0.find_branch(name.as_ref(), BranchType::Local) {
             Ok(b) => Ok(Some(b)),
             Err(e) => {
@@ -58,7 +58,7 @@ impl GitRepo {
             }
         }
     }
-    fn get_or_create_branch(&self, name: impl AsRef<str>) -> Result<Branch<'_>> {
+    fn get_or_create_branch(&self, name: impl AsRef<str>) -> anyhow::Result<Branch<'_>> {
         match self.get_branch(&name)? {
             Some(b) => Ok(b),
             None => {
@@ -81,7 +81,7 @@ impl GitRepo {
         &self,
         target: &ReferenceName,
         message: impl AsRef<str>,
-    ) -> Result<Reference<'_>> {
+    ) -> anyhow::Result<Reference<'_>> {
         let head = match target {
             ReferenceName::Branch(name) => self
                 .0
@@ -106,17 +106,17 @@ impl GitRepo {
         &self,
         name: impl AsRef<str>,
         message: impl AsRef<str>,
-    ) -> Result<Reference<'_>> {
+    ) -> anyhow::Result<Reference<'_>> {
         let branch = self.get_or_create_branch(name.as_ref())?;
         let ref_name = ReferenceName::Branch(branch.into_reference().name().unwrap().to_string());
         self.change_head_ref(&ref_name, message)
     }
 
-    fn get_current_index(&self) -> Result<Index> {
+    fn get_current_index(&self) -> anyhow::Result<Index> {
         self.0.index().map_err(|e| anyhow!(GitError::Unknown(e)))
     }
 
-    fn add_cwd_all(&self) -> Result<()> {
+    fn add_cwd_all(&self) -> anyhow::Result<()> {
         let mut index = self.0.index().map_err(|e| anyhow!(GitError::Unknown(e)))?;
         index
             .add_all(["."], IndexAddOption::DEFAULT, None)
@@ -125,7 +125,7 @@ impl GitRepo {
         Ok(())
     }
 
-    fn get_current_head_name(&self) -> Result<ReferenceName> {
+    fn get_current_head_name(&self) -> anyhow::Result<ReferenceName> {
         let head = self.head()?;
         if self
             .0
@@ -142,7 +142,7 @@ impl GitRepo {
         }
     }
 
-    fn get_ref_workdir_diff(&self, reference: &Reference<'_>) -> Result<Diff<'_>> {
+    fn get_ref_workdir_diff(&self, reference: &Reference<'_>) -> anyhow::Result<Diff<'_>> {
         let tree = reference
             .peel_to_tree()
             .map_err(|e| anyhow!(GitError::Unknown(e)))?;
@@ -157,7 +157,7 @@ impl GitRepo {
             )
             .map_err(|e| anyhow!(GitError::Unknown(e)))
     }
-    fn is_saved(&self, branch: impl AsRef<str>) -> Result<bool> {
+    fn is_saved(&self, branch: impl AsRef<str>) -> anyhow::Result<bool> {
         let head = self.head()?;
         let diff = self.get_ref_workdir_diff(&head)?;
         let stats = diff.stats().map_err(|e| anyhow!(GitError::Unknown(e)))?;
@@ -173,7 +173,11 @@ impl GitRepo {
         }
     }
 
-    fn get_ref_ref_diff(&self, old: &Reference<'_>, new: &Reference<'_>) -> Result<Diff<'_>> {
+    fn get_ref_ref_diff(
+        &self,
+        old: &Reference<'_>,
+        new: &Reference<'_>,
+    ) -> anyhow::Result<Diff<'_>> {
         let old = old
             .peel_to_tree()
             .map_err(|e| anyhow!(GitError::Unknown(e)))?;
@@ -198,7 +202,7 @@ impl GitRepo {
         our: &Reference<'_>,
         their: &Reference<'_>,
         message: impl AsRef<str>,
-    ) -> Result<Option<Oid>> {
+    ) -> anyhow::Result<Option<Oid>> {
         let oc = our
             .peel_to_commit()
             .map_err(|e| anyhow!(GitError::Unknown(e)))?;
@@ -243,7 +247,11 @@ impl GitRepo {
         Ok(Some(commit))
     }
     /// Merge ref to HEAD if there are no diffs
-    fn auto_merge(&self, from: &ReferenceName, message: impl AsRef<str>) -> Result<Option<Oid>> {
+    fn auto_merge(
+        &self,
+        from: &ReferenceName,
+        message: impl AsRef<str>,
+    ) -> anyhow::Result<Option<Oid>> {
         if let ReferenceName::Branch(branch_ref) = from {
             let branch = self
                 .0
@@ -261,12 +269,12 @@ impl GitRepo {
     }
 
     /// Backup current index to entries
-    fn backup_index(&self) -> Result<Vec<IndexEntry>> {
+    fn backup_index(&self) -> anyhow::Result<Vec<IndexEntry>> {
         let index = self.0.index().map_err(|e| anyhow!(GitError::Unknown(e)))?;
         Ok(index.iter().collect())
     }
     /// Restore index from entries
-    fn restore_index(&self, entries: impl IntoIterator<Item = IndexEntry>) -> Result<()> {
+    fn restore_index(&self, entries: impl IntoIterator<Item = IndexEntry>) -> anyhow::Result<()> {
         let mut index = self.get_current_index()?;
         for entry in entries.into_iter() {
             index
@@ -278,7 +286,7 @@ impl GitRepo {
     }
 
     /// Create new commit
-    fn commit(&self, parents: &[&Commit], message: impl AsRef<str>) -> Result<Oid> {
+    fn commit(&self, parents: &[&Commit], message: impl AsRef<str>) -> anyhow::Result<Oid> {
         let mut index = self.0.index().map_err(|e| anyhow!(GitError::Unknown(e)))?;
         let tree_oid = index
             .write_tree()
@@ -299,7 +307,7 @@ impl GitRepo {
     }
 
     /// Create new commit on current HEAD
-    fn commit_on_current_head(&self, message: impl AsRef<str>) -> Result<Oid> {
+    fn commit_on_current_head(&self, message: impl AsRef<str>) -> anyhow::Result<Oid> {
         let commit = self
             .head()?
             .peel_to_commit()
@@ -313,7 +321,7 @@ impl GitRepo {
         branch_name: impl AsRef<str>,
         commit_message: impl AsRef<str>,
         merge_message: impl AsRef<str>,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let state = self.0.state();
         if state != RepositoryState::Clean {
             return Ok(());
@@ -372,6 +380,18 @@ impl GitRepo {
         self.restore_index(current_index_entries)
             .context("Failed to restore index entries")?;
 
+        Ok(())
+    }
+
+    /// Add Git worktree at the specified path
+    pub fn add_worktree(
+        &self,
+        branch_name: impl AsRef<str>,
+        path: impl AsRef<Path>,
+    ) -> anyhow::Result<()> {
+        self.0
+            .worktree(branch_name.as_ref(), path.as_ref(), None)
+            .context("failed to add new worktree")?;
         Ok(())
     }
 }

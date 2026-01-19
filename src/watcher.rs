@@ -25,11 +25,7 @@ impl RepoWatcher {
                 if let Ok(ev) = result
                     && (ev.kind.is_create() || ev.kind.is_modify() || ev.kind.is_remove())
                 {
-                    let process_id = ev.attrs.process_id();
-                    tracing::info!("process ID: {process_id:?}");
-
                     let branch = conf.branch.clone();
-
                     let commit_message = conf.commit_message.clone();
                     let merge_message = conf.merge_message.clone();
                     let delay = conf.delay;
@@ -49,7 +45,7 @@ impl RepoWatcher {
                             .unwrap_or(0);
                         tracing::trace!("{edited} nano secs past from last edit");
                         if edited == 0 {
-                            tracing::trace!(
+                            tracing::info!(
                                 "edited and {delay} secs past; save current contents of: {}",
                                 path_buf.display()
                             );
