@@ -58,7 +58,7 @@ fn main() {
             Ok(lib) => match lib.version() {
                 Ok(version) => {
                     tracing::debug!("current library version: {version}");
-                    if &version == PKG_VERSION {
+                    if version == PKG_VERSION {
                         Some(lib)
                     } else {
                         None
@@ -91,7 +91,7 @@ fn main() {
 }
 
 fn write_library(path: &Path) {
-    if let Err(e) = fs::write(&path, DYLIB_BIN).context("failed to write dynamic link library") {
+    if let Err(e) = fs::write(path, DYLIB_BIN).context("failed to write dynamic link library") {
         tracing::error!("{e:?}");
         exit(1);
     }

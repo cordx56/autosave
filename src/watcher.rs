@@ -46,8 +46,11 @@ fn debounce_worker(
                         path.display()
                     );
                     if let Ok(repo) = GitRepo::new(&path)
-                        && let Err(e) =
-                            repo.save(branch.clone(), commit_message.clone(), merge_message.clone())
+                        && let Err(e) = repo.save(
+                            branch.clone(),
+                            commit_message.clone(),
+                            merge_message.clone(),
+                        )
                     {
                         tracing::error!("{e}");
                     }

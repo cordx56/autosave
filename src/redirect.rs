@@ -1,4 +1,13 @@
-///! Path redirect functions for LD_PRELOAD
+//! Path redirect functions for LD_PRELOAD
+//!
+//! # Safety
+//!
+//! All functions in this module are FFI wrappers that intercept libc calls.
+//! They require the same safety guarantees as the original libc functions:
+//! - Pointers must be valid and point to properly initialized memory
+//! - String pointers must be null-terminated C strings
+//! - Buffer sizes must be accurate
+#![allow(clippy::missing_safety_doc)]
 
 use libc::*;
 use std::env;
@@ -160,7 +169,12 @@ pub unsafe extern "C" fn open64(path: *const c_char, flags: c_int, mode: mode_t)
 
 type OpenatFn = unsafe extern "C" fn(c_int, *const c_char, c_int, mode_t) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn openat(dirfd: c_int, path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
+pub unsafe extern "C" fn openat(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_int,
+    mode: mode_t,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<OpenatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("openat"));
 
@@ -176,7 +190,12 @@ pub unsafe extern "C" fn openat(dirfd: c_int, path: *const c_char, flags: c_int,
 
 type Openat64Fn = unsafe extern "C" fn(c_int, *const c_char, c_int, mode_t) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn openat64(dirfd: c_int, path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
+pub unsafe extern "C" fn openat64(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_int,
+    mode: mode_t,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<Openat64Fn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("openat64"));
 
@@ -292,7 +311,12 @@ pub unsafe extern "C" fn lstat64(path: *const c_char, buf: *mut stat64) -> c_int
 
 type FstatatFn = unsafe extern "C" fn(c_int, *const c_char, *mut stat, c_int) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fstatat(dirfd: c_int, path: *const c_char, buf: *mut stat, flags: c_int) -> c_int {
+pub unsafe extern "C" fn fstatat(
+    dirfd: c_int,
+    path: *const c_char,
+    buf: *mut stat,
+    flags: c_int,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<FstatatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("fstatat"));
 
@@ -308,7 +332,12 @@ pub unsafe extern "C" fn fstatat(dirfd: c_int, path: *const c_char, buf: *mut st
 
 type Fstatat64Fn = unsafe extern "C" fn(c_int, *const c_char, *mut stat64, c_int) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fstatat64(dirfd: c_int, path: *const c_char, buf: *mut stat64, flags: c_int) -> c_int {
+pub unsafe extern "C" fn fstatat64(
+    dirfd: c_int,
+    path: *const c_char,
+    buf: *mut stat64,
+    flags: c_int,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<Fstatat64Fn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("fstatat64"));
 
@@ -506,7 +535,12 @@ pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
 
 type FaccessatFn = unsafe extern "C" fn(c_int, *const c_char, c_int, c_int) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn faccessat(dirfd: c_int, path: *const c_char, mode: c_int, flags: c_int) -> c_int {
+pub unsafe extern "C" fn faccessat(
+    dirfd: c_int,
+    path: *const c_char,
+    mode: c_int,
+    flags: c_int,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<FaccessatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("faccessat"));
 
@@ -681,7 +715,8 @@ pub unsafe extern "C" fn renameat(
     }
 }
 
-type Renameat2Fn = unsafe extern "C" fn(c_int, *const c_char, c_int, *const c_char, c_uint) -> c_int;
+type Renameat2Fn =
+    unsafe extern "C" fn(c_int, *const c_char, c_int, *const c_char, c_uint) -> c_int;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn renameat2(
     olddirfd: c_int,
@@ -803,7 +838,11 @@ pub unsafe extern "C" fn symlink(target: *const c_char, linkpath: *const c_char)
 
 type SymlinkatFn = unsafe extern "C" fn(*const c_char, c_int, *const c_char) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn symlinkat(target: *const c_char, newdirfd: c_int, linkpath: *const c_char) -> c_int {
+pub unsafe extern "C" fn symlinkat(
+    target: *const c_char,
+    newdirfd: c_int,
+    linkpath: *const c_char,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<SymlinkatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("symlinkat"));
 
@@ -819,7 +858,11 @@ pub unsafe extern "C" fn symlinkat(target: *const c_char, newdirfd: c_int, linkp
 
 type ReadlinkFn = unsafe extern "C" fn(*const c_char, *mut c_char, size_t) -> ssize_t;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn readlink(path: *const c_char, buf: *mut c_char, bufsize: size_t) -> ssize_t {
+pub unsafe extern "C" fn readlink(
+    path: *const c_char,
+    buf: *mut c_char,
+    bufsize: size_t,
+) -> ssize_t {
     static ORIGINAL: OnceLock<Option<ReadlinkFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("readlink"));
 
@@ -876,7 +919,12 @@ pub unsafe extern "C" fn chmod(path: *const c_char, mode: mode_t) -> c_int {
 
 type FchmodatFn = unsafe extern "C" fn(c_int, *const c_char, mode_t, c_int) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fchmodat(dirfd: c_int, path: *const c_char, mode: mode_t, flags: c_int) -> c_int {
+pub unsafe extern "C" fn fchmodat(
+    dirfd: c_int,
+    path: *const c_char,
+    mode: mode_t,
+    flags: c_int,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<FchmodatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("fchmodat"));
 
@@ -1019,7 +1067,11 @@ pub unsafe extern "C" fn utimensat(
 
 type FutimesatFn = unsafe extern "C" fn(c_int, *const c_char, *const timeval) -> c_int;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn futimesat(dirfd: c_int, path: *const c_char, times: *const timeval) -> c_int {
+pub unsafe extern "C" fn futimesat(
+    dirfd: c_int,
+    path: *const c_char,
+    times: *const timeval,
+) -> c_int {
     static ORIGINAL: OnceLock<Option<FutimesatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("futimesat"));
 
@@ -1037,7 +1089,8 @@ pub unsafe extern "C" fn futimesat(dirfd: c_int, path: *const c_char, times: *co
 // Extended attribute functions
 //
 
-type GetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void, size_t) -> ssize_t;
+type GetxattrFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void, size_t) -> ssize_t;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getxattr(
     path: *const c_char,
@@ -1058,7 +1111,8 @@ pub unsafe extern "C" fn getxattr(
     }
 }
 
-type LgetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void, size_t) -> ssize_t;
+type LgetxattrFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void, size_t) -> ssize_t;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lgetxattr(
     path: *const c_char,
@@ -1079,7 +1133,8 @@ pub unsafe extern "C" fn lgetxattr(
     }
 }
 
-type SetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *const c_void, size_t, c_int) -> c_int;
+type SetxattrFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *const c_void, size_t, c_int) -> c_int;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setxattr(
     path: *const c_char,
@@ -1101,7 +1156,8 @@ pub unsafe extern "C" fn setxattr(
     }
 }
 
-type LsetxattrFn = unsafe extern "C" fn(*const c_char, *const c_char, *const c_void, size_t, c_int) -> c_int;
+type LsetxattrFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *const c_void, size_t, c_int) -> c_int;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lsetxattr(
     path: *const c_char,
@@ -1125,7 +1181,11 @@ pub unsafe extern "C" fn lsetxattr(
 
 type ListxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, size_t) -> ssize_t;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn listxattr(path: *const c_char, list: *mut c_char, size: size_t) -> ssize_t {
+pub unsafe extern "C" fn listxattr(
+    path: *const c_char,
+    list: *mut c_char,
+    size: size_t,
+) -> ssize_t {
     static ORIGINAL: OnceLock<Option<ListxattrFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("listxattr"));
 
@@ -1141,7 +1201,11 @@ pub unsafe extern "C" fn listxattr(path: *const c_char, list: *mut c_char, size:
 
 type LlistxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, size_t) -> ssize_t;
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn llistxattr(path: *const c_char, list: *mut c_char, size: size_t) -> ssize_t {
+pub unsafe extern "C" fn llistxattr(
+    path: *const c_char,
+    list: *mut c_char,
+    size: size_t,
+) -> ssize_t {
     static ORIGINAL: OnceLock<Option<LlistxattrFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("llistxattr"));
 
@@ -1191,7 +1255,8 @@ pub unsafe extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) 
 // Exec functions (to propagate LD_PRELOAD)
 //
 
-type ExecveFn = unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
+type ExecveFn =
+    unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execve(
     path: *const c_char,
