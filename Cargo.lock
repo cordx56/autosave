@@ -82,6 +82,7 @@ dependencies = [
  "clap",
  "daemonize",
  "git2",
+ "libc",
  "libloading",
  "nix",
  "notify",
