@@ -30,7 +30,7 @@ pub fn check_daemon() -> anyhow::Result<bool> {
 
 /// Start daemon process and exit current process
 #[tracing::instrument(skip(tracing_handle))]
-pub fn start_daemon(tracing_handle: types::TracingReloadHandle) -> anyhow::Result<()> {
+pub fn start_daemon(tracing_handle: &types::TracingReloadHandle) -> anyhow::Result<()> {
     let cache_dir = cache_dir()?;
     tracing::debug!("use cache dir: {}", cache_dir.display());
     std::fs::create_dir_all(&cache_dir).context("failed to create cache dir")?;
