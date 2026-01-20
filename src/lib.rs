@@ -34,7 +34,7 @@ enum Command {
     Run {
         #[arg(short, long, help = "New branch name")]
         branch: String,
-        #[arg(value_hint = ValueHint::CommandWithArguments, help = "Command to execute")]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_hint = ValueHint::CommandWithArguments, help = "Command to execute")]
         args: Option<Vec<String>>,
     },
 }

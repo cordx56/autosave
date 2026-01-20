@@ -88,10 +88,12 @@ pub fn do_worktree(
     let mut iter = args.iter();
     let command = CString::new(iter.next().context("no command!")?.as_str())
         .context("failed to get C string")?;
-    let args = iter
+    let rest_args = iter
         .map(|v| CString::new(v.as_str()))
         .collect::<Result<Vec<_>, _>>()
         .context("failed to get C string")?;
+    // execvp requires argv[0] to be the command name
+    let args: Vec<&CString> = std::iter::once(&command).chain(rest_args.iter()).collect();
 
     let child_pid = match unsafe { unistd::fork().context("failed to start child process")? } {
         unistd::ForkResult::Parent { child } => child,

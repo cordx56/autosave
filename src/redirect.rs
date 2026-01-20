@@ -12,6 +12,17 @@ static REDIRECT: LazyLock<Option<(String, String)>> = LazyLock::new(|| {
     Some((from, to))
 });
 
+/// Check if path is inside .git directory of REDIRECT_FROM (should not be redirected)
+/// Note: .git itself should be redirected, only .git/* should not be redirected
+fn is_git_internal_path(absolute_str: &str) -> bool {
+    if let Some((from, _)) = REDIRECT.as_ref() {
+        let git_dir_prefix = format!("{}/.git/", from);
+        absolute_str.starts_with(&git_dir_prefix)
+    } else {
+        false
+    }
+}
+
 /// Normalize path by resolving . and .. components
 fn normalize_path(path: &std::path::Path) -> PathBuf {
     let mut result = PathBuf::new();
@@ -48,6 +59,11 @@ fn redirect_path_str(path_str: &str) -> Option<CString> {
     // Convert input path to absolute and normalized
     let absolute_path = to_absolute_path(path_str)?;
     let absolute_str = absolute_path.to_str()?;
+
+    // Don't redirect access to original .git directory
+    if is_git_internal_path(absolute_str) {
+        return None;
+    }
 
     if let Some(suffix) = absolute_str.strip_prefix(&format!("{}/", from)) {
         let redirected = format!("{}/{}", to, suffix);
