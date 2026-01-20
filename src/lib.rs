@@ -46,10 +46,19 @@ pub extern "C" fn version() -> *const ffi::c_char {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main(
-    tracing_handle: &types::TracingReloadHandle,
-    cdylib_path: *const ffi::c_char,
-) {
+pub extern "C" fn main(cdylib_path: *const ffi::c_char) {
+    use tracing_subscriber::{EnvFilter, filter::LevelFilter, prelude::*};
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::WARN.into())
+                .from_env_lossy(),
+        )
+        .boxed();
+    let (layer, reload_handle) = tracing_subscriber::reload::Layer::new(layer);
+    tracing_subscriber::registry().with(layer).init();
+
     let cdylib_path = PathBuf::from(
         unsafe { ffi::CString::from_raw(cdylib_path as *mut ffi::c_char) }
             .as_c_str()
@@ -70,7 +79,7 @@ pub extern "C" fn main(
         tracing::info!("daemon is already running");
     } else {
         tracing::info!("daemon is not running; start daemon");
-        if let Err(e) = daemon::start_daemon(tracing_handle) {
+        if let Err(e) = daemon::start_daemon(&reload_handle) {
             tracing::error!("{e:?}");
             exit(1);
         }

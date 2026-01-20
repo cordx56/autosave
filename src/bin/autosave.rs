@@ -13,8 +13,6 @@ use tracing_subscriber::{
     reload::Handle,
 };
 
-pub type TracingReloadHandle = Handle<Box<dyn Layer<Registry> + Send + Sync>, Registry>;
-
 const DYLIB_BIN: &[u8] = include_bytes!(env!("DYLIB_PATH"));
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -76,7 +74,7 @@ fn main() {
         };
         if let Some(dylib) = dylib {
             tracing::debug!("enter main function");
-            if let Err(e) = dylib.main(&reload_handle, &cdylib_path) {
+            if let Err(e) = dylib.main(&cdylib_path) {
                 tracing::warn!("{e:?}");
             }
         }
@@ -117,19 +115,15 @@ impl DyLib {
             Ok(ffi::CString::from_raw(ptr).to_string_lossy().to_string())
         }
     }
-    pub fn main(
-        &self,
-        tracing_handle: &TracingReloadHandle,
-        cdylib_path: &Path,
-    ) -> anyhow::Result<()> {
+    pub fn main(&self, cdylib_path: &Path) -> anyhow::Result<()> {
         let cdylib_str = cdylib_path.to_string_lossy().to_string();
         let cdylib_cstr = unsafe { ffi::CStr::from_ptr(cdylib_str.as_ptr()) };
         unsafe {
-            let func: Symbol<unsafe extern "C" fn(&TracingReloadHandle, *const ffi::c_char)> = self
-                .cdylib
-                .get(b"main")
-                .context("failed to load main function")?;
-            func(tracing_handle, cdylib_cstr.as_ptr());
+            let func: Symbol<unsafe extern "C" fn(*const ffi::c_char)> =
+                self.cdylib
+                    .get(b"main")
+                    .context("failed to load main function")?;
+            func(cdylib_cstr.as_ptr());
             exit(0);
         }
     }
