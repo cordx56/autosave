@@ -426,4 +426,13 @@ impl GitRepo {
             .prune(Some(WorktreePruneOptions::new().working_tree(true)))
             .context("failed to remove worktree")
     }
+
+    pub fn is_ignored(&self, path: impl AsRef<Path>) -> bool {
+        let path = path.as_ref();
+        let git_path = self.0.path();
+        if path == git_path || path.starts_with(format!("{}/", git_path.display())) {
+            return true;
+        }
+        self.0.is_path_ignored(path).unwrap_or(true)
+    }
 }

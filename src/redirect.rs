@@ -11,11 +11,12 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(static_mut_refs)]
 
+use crate::git::GitRepo;
 use ctor::ctor;
 use libc::*;
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
-use std::path::{Component, PathBuf};
+use std::path::{Path, PathBuf};
 
 // Thread-local recursion guard to prevent infinite recursion in hooks
 thread_local! {
@@ -48,6 +49,8 @@ impl Drop for RecursionGuard {
 /// Redirect configuration loaded at library init time
 static mut REDIRECT_FROM: Option<String> = None;
 static mut REDIRECT_TO: Option<String> = None;
+/// Whether to skip redirecting gitignored paths
+static mut SKIP_GITIGNORE: bool = false;
 
 fn get_redirect() -> Option<(&'static str, &'static str)> {
     unsafe {
@@ -58,44 +61,46 @@ fn get_redirect() -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Check if path is inside .git directory of REDIRECT_FROM (should not be redirected)
-/// Note: .git itself should be redirected, only .git/* should not be redirected
-fn is_git_internal_path(absolute_str: &str) -> bool {
-    if let Some((from, _)) = get_redirect() {
-        let git_dir_prefix = format!("{}/.git/", from);
-        absolute_str.starts_with(&git_dir_prefix)
-    } else {
-        false
-    }
-}
-
-/// Normalize path by resolving . and .. components
-fn normalize_path(path: &std::path::Path) -> PathBuf {
-    let mut result = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                result.pop();
-            }
-            _ => {
-                result.push(component);
-            }
+/// Check if a path is gitignored (using cached prefixes from git2)
+fn is_gitignored(absolute_str: &str) -> bool {
+    unsafe {
+        if !SKIP_GITIGNORE {
+            return false;
         }
+
+        let repo = match GitRepo::new(absolute_str).ok() {
+            Some(v) => v,
+            None => return false,
+        };
+
+        repo.is_ignored(absolute_str)
     }
-    result
 }
 
-/// Convert path to absolute, normalized path
-fn to_absolute_path(path_str: &str) -> Option<PathBuf> {
-    let path = std::path::Path::new(path_str);
-    let absolute = if path.is_absolute() {
+/// Normalize a path without requiring it to exist
+/// This handles . and .. components and joins with cwd if relative
+fn normalize_path(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        let cwd = std::env::current_dir().ok()?;
-        cwd.join(path)
+        std::env::current_dir().ok()?.join(path)
     };
-    Some(normalize_path(&absolute))
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(p) => normalized.push(p.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {} // Skip .
+            Component::ParentDir => {
+                normalized.pop(); // Go up one directory
+            }
+            Component::Normal(c) => normalized.push(c),
+        }
+    }
+    Some(normalized)
 }
 
 /// Core redirect logic - takes a normalized absolute path string
@@ -103,11 +108,23 @@ fn redirect_path_str(path_str: &str) -> Option<CString> {
     let (from, to) = get_redirect()?;
 
     // Convert input path to absolute and normalized
-    let absolute_path = to_absolute_path(path_str)?;
+    // Use normalize_path instead of canonicalize to handle non-existent files
+    let path = Path::new(path_str);
+    let absolute_path = normalize_path(path)?;
     let absolute_str = absolute_path.to_str()?;
 
-    // Don't redirect access to original .git directory
-    if is_git_internal_path(absolute_str) {
+    // Don't redirect .git or its subdirectories
+    // Git metadata should be accessed from the original repository.
+    // Git worktree context is handled via GIT_DIR and GIT_WORK_TREE env vars.
+    let is_git = absolute_str == format!("{from}/.git")
+        || absolute_path.starts_with(format!("{from}/.git/"));
+    if is_git {
+        return None;
+    }
+
+    // Don't redirect gitignored paths (when REDIRECT_SKIP_GITIGNORE is set)
+    let git_ignored = is_gitignored(absolute_str);
+    if git_ignored {
         return None;
     }
 
@@ -369,15 +386,8 @@ static mut ORIGINAL: OriginalFunctions = OriginalFunctions {
 /// Library constructor - initializes all original function pointers and environment
 #[ctor]
 unsafe fn init() {
-    // Load environment variables first (before any hooks are active)
-    if let Ok(from) = std::env::var("REDIRECT_FROM")
-        && let Ok(to) = std::env::var("REDIRECT_TO")
-    {
-        REDIRECT_FROM = Some(from);
-        REDIRECT_TO = Some(to);
-    }
-
-    // Pre-load all original function pointers
+    // Pre-load all original function pointers FIRST
+    // This must happen before any git2 operations which call libc functions
     unsafe {
         ORIGINAL.open = load_original(b"open\0");
         ORIGINAL.open64 = load_original(b"open64\0");
@@ -440,6 +450,19 @@ unsafe fn init() {
         ORIGINAL.lremovexattr = load_original(b"lremovexattr\0");
         ORIGINAL.execve = load_original(b"execve\0");
         ORIGINAL.execv = load_original(b"execv\0");
+    }
+
+    // Now load environment variables (after original functions are available)
+    if let Ok(from) = std::env::var("REDIRECT_FROM")
+        && let Ok(to) = std::env::var("REDIRECT_TO")
+    {
+        // Check if we should skip gitignored paths
+        SKIP_GITIGNORE = std::env::var("REDIRECT_SKIP_GITIGNORE")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+
+        REDIRECT_FROM = Some(from);
+        REDIRECT_TO = Some(to);
     }
 }
 

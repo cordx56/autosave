@@ -73,7 +73,7 @@ pub fn do_worktree(
     branch: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> anyhow::Result<i32> {
-    let worktree_path = setup_worktree(&branch, &path)?;
+    let (worktree_name, worktree_path) = setup_worktree(&branch, &path)?;
 
     let config = Config {
         branch: branch.as_ref().to_string(),
@@ -98,10 +98,15 @@ pub fn do_worktree(
     let child_pid = match unsafe { unistd::fork().context("failed to start child process")? } {
         unistd::ForkResult::Parent { child } => child,
         unistd::ForkResult::Child => {
+            let gitdir = path.as_ref().join(".git/worktrees").join(&worktree_name);
+
             unsafe {
                 env::set_var(PRELOAD, cdylib_path.as_ref());
                 env::set_var("REDIRECT_FROM", path.as_ref());
-                env::set_var("REDIRECT_TO", &worktree_path);
+                env::set_var("REDIRECT_SKIP_GITIGNORE", "1");
+                // Set Git environment variables for worktree context
+                env::set_var("GIT_DIR", &gitdir);
+                env::set_var("GIT_WORK_TREE", &worktree_path);
             }
 
             let pid = unistd::Pid::from_raw(0);
@@ -143,16 +148,19 @@ pub fn do_worktree(
 }
 
 /// Enter Git worktree dir
-pub fn setup_worktree(branch: impl AsRef<str>, path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
+pub fn setup_worktree(
+    branch: impl AsRef<str>,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<(String, PathBuf)> {
     let worktree_path = worktree_path(&path, &branch)?;
     fs::create_dir_all(worktree_path.parent().unwrap())
         .context("failed to create worktree parent dir")?;
     let repo = git::GitRepo::new(&path).context("failed to setup Git repo")?;
-    let _name = repo
+    let name = repo
         .add_worktree(&branch, &worktree_path)
         .context("failed to setup Git worktree")?;
     tracing::info!("Git worktree setup at: {}", worktree_path.display());
-    Ok(worktree_path)
+    Ok((name, worktree_path))
 }
 /// Get Git worktree path
 pub fn worktree_path(path: impl AsRef<Path>, branch: impl AsRef<str>) -> anyhow::Result<PathBuf> {
