@@ -3,6 +3,7 @@
 use libc::*;
 use std::env;
 use std::ffi::{CStr, CString};
+use std::path::{Component, PathBuf};
 use std::sync::{LazyLock, OnceLock};
 
 static REDIRECT: LazyLock<Option<(String, String)>> = LazyLock::new(|| {
@@ -11,34 +12,87 @@ static REDIRECT: LazyLock<Option<(String, String)>> = LazyLock::new(|| {
     Some((from, to))
 });
 
-fn get_redirect_path(path: *const c_char) -> Option<CString> {
-    if path.is_null() {
-        return None;
+/// Normalize path by resolving . and .. components
+fn normalize_path(path: &std::path::Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                result.pop();
+            }
+            _ => {
+                result.push(component);
+            }
+        }
     }
+    result
+}
 
+/// Convert path to absolute, normalized path
+fn to_absolute_path(path_str: &str) -> Option<PathBuf> {
+    let path = std::path::Path::new(path_str);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        cwd.join(path)
+    };
+    Some(normalize_path(&absolute))
+}
+
+/// Core redirect logic - takes a normalized absolute path string
+fn redirect_path_str(path_str: &str) -> Option<CString> {
     let (from, to) = REDIRECT.as_ref()?;
-    let path_str = unsafe { CStr::from_ptr(path) }.to_str().ok()?;
 
-    if let Some(suffix) = path_str.strip_prefix(&format!("{}/", from)) {
+    // Convert input path to absolute and normalized
+    let absolute_path = to_absolute_path(path_str)?;
+    let absolute_str = absolute_path.to_str()?;
+
+    if let Some(suffix) = absolute_str.strip_prefix(&format!("{}/", from)) {
         let redirected = format!("{}/{}", to, suffix);
         Some(CString::new(redirected).ok()?)
-    } else if path_str == from {
+    } else if absolute_str == from {
         Some(CString::new(to.as_str()).ok()?)
     } else {
         None
     }
 }
 
-/// Get redirect path only for absolute paths (used by *at functions)
-fn get_redirect_path_absolute(path: *const c_char) -> Option<CString> {
+fn get_redirect_path(path: *const c_char) -> Option<CString> {
     if path.is_null() {
         return None;
     }
+
+    let path_str = unsafe { CStr::from_ptr(path) }.to_str().ok()?;
+    redirect_path_str(path_str)
+}
+
+/// Get redirect path for *at functions
+fn get_redirect_path_at(dirfd: c_int, path: *const c_char) -> Option<CString> {
+    if path.is_null() {
+        return None;
+    }
+
+    let path_str = unsafe { CStr::from_ptr(path) }.to_str().ok()?;
     let first_char = unsafe { *path };
+
     if first_char == b'/' as c_char {
-        get_redirect_path(path)
+        // Absolute path
+        redirect_path_str(path_str)
+    } else if dirfd == AT_FDCWD {
+        // Relative path with AT_FDCWD - resolve against cwd
+        redirect_path_str(path_str)
     } else {
-        None
+        // Relative path with specific dirfd - try to resolve via /proc/self/fd
+        let fd_path = format!("/proc/self/fd/{}", dirfd);
+        if let Ok(resolved) = std::fs::read_link(&fd_path) {
+            let full_path = resolved.join(path_str);
+            let full_path_str = full_path.to_str()?;
+            redirect_path_str(full_path_str)
+        } else {
+            None
+        }
     }
 }
 
@@ -94,7 +148,7 @@ pub unsafe extern "C" fn openat(dirfd: c_int, path: *const c_char, flags: c_int,
     static ORIGINAL: OnceLock<Option<OpenatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("openat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |p| p.as_ptr());
 
     if let Some(f) = original {
@@ -110,7 +164,7 @@ pub unsafe extern "C" fn openat64(dirfd: c_int, path: *const c_char, flags: c_in
     static ORIGINAL: OnceLock<Option<Openat64Fn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("openat64"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |p| p.as_ptr());
 
     if let Some(f) = original {
@@ -226,7 +280,7 @@ pub unsafe extern "C" fn fstatat(dirfd: c_int, path: *const c_char, buf: *mut st
     static ORIGINAL: OnceLock<Option<FstatatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("fstatat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -242,11 +296,173 @@ pub unsafe extern "C" fn fstatat64(dirfd: c_int, path: *const c_char, buf: *mut 
     static ORIGINAL: OnceLock<Option<Fstatat64Fn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("fstatat64"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
         unsafe { f(dirfd, actual, buf, flags) }
+    } else {
+        -1
+    }
+}
+
+type StatxFn = unsafe extern "C" fn(c_int, *const c_char, c_int, c_uint, *mut statx) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn statx(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_int,
+    mask: c_uint,
+    buf: *mut statx,
+) -> c_int {
+    static ORIGINAL: OnceLock<Option<StatxFn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("statx"));
+
+    let redirected = get_redirect_path_at(dirfd, path);
+    let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
+
+    if let Some(f) = original {
+        unsafe { f(dirfd, actual, flags, mask, buf) }
+    } else {
+        -1
+    }
+}
+
+//
+// Glibc internal stat functions
+//
+
+type XstatFn = unsafe extern "C" fn(c_int, *const c_char, *mut stat) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __xstat(ver: c_int, path: *const c_char, buf: *mut stat) -> c_int {
+    static ORIGINAL: OnceLock<Option<XstatFn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__xstat"));
+
+    let redirected = get_redirect_path(path);
+    let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
+
+    if let Some(f) = original {
+        unsafe { f(ver, actual, buf) }
+    } else {
+        -1
+    }
+}
+
+type Xstat64Fn = unsafe extern "C" fn(c_int, *const c_char, *mut stat64) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __xstat64(ver: c_int, path: *const c_char, buf: *mut stat64) -> c_int {
+    static ORIGINAL: OnceLock<Option<Xstat64Fn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__xstat64"));
+
+    let redirected = get_redirect_path(path);
+    let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
+
+    if let Some(f) = original {
+        unsafe { f(ver, actual, buf) }
+    } else {
+        -1
+    }
+}
+
+type LxstatFn = unsafe extern "C" fn(c_int, *const c_char, *mut stat) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __lxstat(ver: c_int, path: *const c_char, buf: *mut stat) -> c_int {
+    static ORIGINAL: OnceLock<Option<LxstatFn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__lxstat"));
+
+    let redirected = get_redirect_path(path);
+    let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
+
+    if let Some(f) = original {
+        unsafe { f(ver, actual, buf) }
+    } else {
+        -1
+    }
+}
+
+type Lxstat64Fn = unsafe extern "C" fn(c_int, *const c_char, *mut stat64) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __lxstat64(ver: c_int, path: *const c_char, buf: *mut stat64) -> c_int {
+    static ORIGINAL: OnceLock<Option<Lxstat64Fn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__lxstat64"));
+
+    let redirected = get_redirect_path(path);
+    let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
+
+    if let Some(f) = original {
+        unsafe { f(ver, actual, buf) }
+    } else {
+        -1
+    }
+}
+
+type FxstatFn = unsafe extern "C" fn(c_int, c_int, *mut stat) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __fxstat(ver: c_int, fd: c_int, buf: *mut stat) -> c_int {
+    static ORIGINAL: OnceLock<Option<FxstatFn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__fxstat"));
+
+    // fxstat operates on fd, no path to redirect
+    if let Some(f) = original {
+        unsafe { f(ver, fd, buf) }
+    } else {
+        -1
+    }
+}
+
+type Fxstat64Fn = unsafe extern "C" fn(c_int, c_int, *mut stat64) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __fxstat64(ver: c_int, fd: c_int, buf: *mut stat64) -> c_int {
+    static ORIGINAL: OnceLock<Option<Fxstat64Fn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__fxstat64"));
+
+    // fxstat operates on fd, no path to redirect
+    if let Some(f) = original {
+        unsafe { f(ver, fd, buf) }
+    } else {
+        -1
+    }
+}
+
+type FxstatatFn = unsafe extern "C" fn(c_int, c_int, *const c_char, *mut stat, c_int) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __fxstatat(
+    ver: c_int,
+    dirfd: c_int,
+    path: *const c_char,
+    buf: *mut stat,
+    flags: c_int,
+) -> c_int {
+    static ORIGINAL: OnceLock<Option<FxstatatFn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__fxstatat"));
+
+    let redirected = get_redirect_path_at(dirfd, path);
+    let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
+
+    if let Some(f) = original {
+        unsafe { f(ver, dirfd, actual, buf, flags) }
+    } else {
+        -1
+    }
+}
+
+type Fxstatat64Fn = unsafe extern "C" fn(c_int, c_int, *const c_char, *mut stat64, c_int) -> c_int;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __fxstatat64(
+    ver: c_int,
+    dirfd: c_int,
+    path: *const c_char,
+    buf: *mut stat64,
+    flags: c_int,
+) -> c_int {
+    static ORIGINAL: OnceLock<Option<Fxstatat64Fn>> = OnceLock::new();
+    let original = ORIGINAL.get_or_init(|| original_func("__fxstatat64"));
+
+    let redirected = get_redirect_path_at(dirfd, path);
+    let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
+
+    if let Some(f) = original {
+        unsafe { f(ver, dirfd, actual, buf, flags) }
     } else {
         -1
     }
@@ -278,7 +494,7 @@ pub unsafe extern "C" fn faccessat(dirfd: c_int, path: *const c_char, mode: c_in
     static ORIGINAL: OnceLock<Option<FaccessatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("faccessat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -330,7 +546,7 @@ pub unsafe extern "C" fn mkdirat(dirfd: c_int, path: *const c_char, mode: mode_t
     static ORIGINAL: OnceLock<Option<MkdiratFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("mkdirat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -398,7 +614,7 @@ pub unsafe extern "C" fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_in
     static ORIGINAL: OnceLock<Option<UnlinkatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("unlinkat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -437,8 +653,8 @@ pub unsafe extern "C" fn renameat(
     static ORIGINAL: OnceLock<Option<RenameatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("renameat"));
 
-    let old_redirected = get_redirect_path_absolute(oldpath);
-    let new_redirected = get_redirect_path_absolute(newpath);
+    let old_redirected = get_redirect_path_at(olddirfd, oldpath);
+    let new_redirected = get_redirect_path_at(newdirfd, newpath);
     let actual_old = old_redirected.as_ref().map_or(oldpath, |v| v.as_ptr());
     let actual_new = new_redirected.as_ref().map_or(newpath, |v| v.as_ptr());
 
@@ -461,8 +677,8 @@ pub unsafe extern "C" fn renameat2(
     static ORIGINAL: OnceLock<Option<Renameat2Fn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("renameat2"));
 
-    let old_redirected = get_redirect_path_absolute(oldpath);
-    let new_redirected = get_redirect_path_absolute(newpath);
+    let old_redirected = get_redirect_path_at(olddirfd, oldpath);
+    let new_redirected = get_redirect_path_at(newdirfd, newpath);
     let actual_old = old_redirected.as_ref().map_or(oldpath, |v| v.as_ptr());
     let actual_new = new_redirected.as_ref().map_or(newpath, |v| v.as_ptr());
 
@@ -539,8 +755,8 @@ pub unsafe extern "C" fn linkat(
     static ORIGINAL: OnceLock<Option<LinkatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("linkat"));
 
-    let old_redirected = get_redirect_path_absolute(oldpath);
-    let new_redirected = get_redirect_path_absolute(newpath);
+    let old_redirected = get_redirect_path_at(olddirfd, oldpath);
+    let new_redirected = get_redirect_path_at(newdirfd, newpath);
     let actual_old = old_redirected.as_ref().map_or(oldpath, |v| v.as_ptr());
     let actual_new = new_redirected.as_ref().map_or(newpath, |v| v.as_ptr());
 
@@ -575,7 +791,7 @@ pub unsafe extern "C" fn symlinkat(target: *const c_char, newdirfd: c_int, linkp
     static ORIGINAL: OnceLock<Option<SymlinkatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("symlinkat"));
 
-    let link_redirected = get_redirect_path_absolute(linkpath);
+    let link_redirected = get_redirect_path_at(newdirfd, linkpath);
     let actual_link = link_redirected.as_ref().map_or(linkpath, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -612,7 +828,7 @@ pub unsafe extern "C" fn readlinkat(
     static ORIGINAL: OnceLock<Option<ReadlinkatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("readlinkat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -648,7 +864,7 @@ pub unsafe extern "C" fn fchmodat(dirfd: c_int, path: *const c_char, mode: mode_
     static ORIGINAL: OnceLock<Option<FchmodatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("fchmodat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -702,7 +918,7 @@ pub unsafe extern "C" fn fchownat(
     static ORIGINAL: OnceLock<Option<FchownatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("fchownat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -775,7 +991,7 @@ pub unsafe extern "C" fn utimensat(
     static ORIGINAL: OnceLock<Option<UtimensatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("utimensat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {
@@ -791,7 +1007,7 @@ pub unsafe extern "C" fn futimesat(dirfd: c_int, path: *const c_char, times: *co
     static ORIGINAL: OnceLock<Option<FutimesatFn>> = OnceLock::new();
     let original = ORIGINAL.get_or_init(|| original_func("futimesat"));
 
-    let redirected = get_redirect_path_absolute(path);
+    let redirected = get_redirect_path_at(dirfd, path);
     let actual = redirected.as_ref().map_or(path, |v| v.as_ptr());
 
     if let Some(f) = original {

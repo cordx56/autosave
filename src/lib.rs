@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand, ValueHint};
 use std::env;
+use std::ffi;
 use std::path::PathBuf;
 use std::process::exit;
 
@@ -40,12 +41,22 @@ enum Command {
 
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[unsafe(no_mangle)]
-pub extern "C" fn version() -> *const u8 {
+pub extern "C" fn version() -> *const ffi::c_char {
     std::ffi::CString::new(PKG_VERSION).unwrap().into_raw()
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main(tracing_handle: &types::TracingReloadHandle) {
+pub extern "C" fn main(
+    tracing_handle: &types::TracingReloadHandle,
+    cdylib_path: *const ffi::c_char,
+) {
+    let cdylib_path = PathBuf::from(
+        unsafe { ffi::CString::from_raw(cdylib_path as *mut ffi::c_char) }
+            .as_c_str()
+            .to_string_lossy()
+            .to_string(),
+    );
+
     let parsed = Cli::parse();
 
     let daemon_check = match daemon::check_daemon() {
@@ -141,7 +152,7 @@ pub extern "C" fn main(tracing_handle: &types::TracingReloadHandle) {
                     }
                 },
             };
-            match client::do_worktree(&args, &branch, &current_dir) {
+            match client::do_worktree(&cdylib_path, &args, &branch, &current_dir) {
                 Ok(v) => exit(v),
                 Err(e) => {
                     tracing::error!("{e:?}");
@@ -150,4 +161,5 @@ pub extern "C" fn main(tracing_handle: &types::TracingReloadHandle) {
             };
         }
     }
+    exit(0);
 }

@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use libloading::{Library, Symbol};
 use std::env;
+use std::ffi;
 use std::fs;
 use std::path::Path;
 use std::process::exit;
@@ -74,7 +75,8 @@ fn main() {
             }
         };
         if let Some(dylib) = dylib {
-            if let Err(e) = dylib.main(&reload_handle) {
+            tracing::debug!("enter main function");
+            if let Err(e) = dylib.main(&reload_handle, &cdylib_path) {
                 tracing::warn!("{e:?}");
             }
         }
@@ -112,18 +114,22 @@ impl DyLib {
                 .get(b"version")
                 .context("failed to load version function")?;
             let ptr = func();
-            Ok(std::ffi::CString::from_raw(ptr)
-                .to_string_lossy()
-                .to_string())
+            Ok(ffi::CString::from_raw(ptr).to_string_lossy().to_string())
         }
     }
-    pub fn main(&self, tracing_handle: &TracingReloadHandle) -> anyhow::Result<()> {
+    pub fn main(
+        &self,
+        tracing_handle: &TracingReloadHandle,
+        cdylib_path: &Path,
+    ) -> anyhow::Result<()> {
+        let cdylib_str = cdylib_path.to_string_lossy().to_string();
+        let cdylib_cstr = unsafe { ffi::CStr::from_ptr(cdylib_str.as_ptr()) };
         unsafe {
-            let func: Symbol<unsafe extern "C" fn(&TracingReloadHandle)> = self
+            let func: Symbol<unsafe extern "C" fn(&TracingReloadHandle, *const ffi::c_char)> = self
                 .cdylib
                 .get(b"main")
                 .context("failed to load main function")?;
-            func(tracing_handle);
+            func(tracing_handle, cdylib_cstr.as_ptr());
             exit(0);
         }
     }

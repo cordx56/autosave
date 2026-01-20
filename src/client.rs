@@ -53,6 +53,10 @@ pub fn change_watch_list(change: types::ChangeWatchRequest) -> anyhow::Result<()
     }
 }
 
+#[cfg(target_os = "linux")]
+const PRELOAD: &str = "LD_PRELOAD";
+#[cfg(target_os = "macos")]
+const PRELOAD: &str = "DYLD_INSERT_LIBRARIES";
 pub const WORKTREES_DIR_NAME: &str = "worktrees";
 
 fn tty_tcsetpgrp(pid: unistd::Pid) -> anyhow::Result<()> {
@@ -64,6 +68,7 @@ fn tty_tcsetpgrp(pid: unistd::Pid) -> anyhow::Result<()> {
 
 /// Exec Git worktree process
 pub fn do_worktree(
+    cdylib_path: impl AsRef<Path>,
     args: &[String],
     branch: impl AsRef<str>,
     path: impl AsRef<Path>,
@@ -91,7 +96,11 @@ pub fn do_worktree(
     let child_pid = match unsafe { unistd::fork().context("failed to start child process")? } {
         unistd::ForkResult::Parent { child } => child,
         unistd::ForkResult::Child => {
-            env::set_current_dir(&worktree_path).context("failed to change working directory")?;
+            unsafe {
+                env::set_var(PRELOAD, cdylib_path.as_ref());
+                env::set_var("REDIRECT_FROM", path.as_ref());
+                env::set_var("REDIRECT_TO", &worktree_path);
+            }
 
             let pid = unistd::Pid::from_raw(0);
             unistd::setpgid(pid, pid).context("failed to set child's process group")?;
