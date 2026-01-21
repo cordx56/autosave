@@ -9,8 +9,6 @@ use tracing_subscriber::{
     Layer,
     filter::{EnvFilter, LevelFilter},
     prelude::*,
-    registry::Registry,
-    reload::Handle,
 };
 
 const DYLIB_BIN: &[u8] = include_bytes!(env!("DYLIB_PATH"));
@@ -31,7 +29,7 @@ fn main() {
                 .from_env_lossy(),
         )
         .boxed();
-    let (layer, reload_handle) = tracing_subscriber::reload::Layer::new(layer);
+    let (layer, _reload_handle) = tracing_subscriber::reload::Layer::new(layer);
     tracing_subscriber::registry().with(layer).init();
 
     let exe_dir = match env::current_exe().context("failed to get executable path") {

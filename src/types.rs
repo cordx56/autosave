@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tracing_subscriber::{Layer, registry::Registry, reload::Handle};
 
 mod implement;
@@ -10,7 +9,7 @@ mod implement;
 pub type TracingReloadHandle = Handle<Box<dyn Layer<Registry> + Send + Sync>, Registry>;
 
 pub struct WatchListEntry {
-    pub config: crate::config::Config,
+    pub configs: Arc<Mutex<Vec<crate::config::Config>>>,
     pub watcher: crate::watcher::RepoWatcher,
 }
 pub type WatchList = HashMap<PathBuf, WatchListEntry>;
@@ -21,7 +20,7 @@ pub struct ApiState {
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct WatchListFileEntry {
-    pub config: crate::config::Config,
+    pub configs: Vec<crate::config::Config>,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct WatchListFile {

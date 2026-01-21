@@ -76,6 +76,7 @@ pub fn do_worktree(
     let (worktree_name, worktree_path) = setup_worktree(&branch, &path)?;
 
     let config = Config {
+        worktree: Some(worktree_name.clone()),
         branch: branch.as_ref().to_string(),
         ..Default::default()
     };

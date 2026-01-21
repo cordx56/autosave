@@ -1,9 +1,10 @@
 use crate::config::Config;
 use crate::git::GitRepo;
 use anyhow::Context as _;
-use notify::{RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -17,48 +18,54 @@ pub struct RepoWatcher {
     debounce_thread: thread::JoinHandle<()>,
 }
 
-fn debounce_worker(
-    rx: mpsc::Receiver<()>,
-    path: PathBuf,
-    delay: u64,
-    branch: String,
-    commit_message: String,
-    merge_message: String,
-) {
+fn debounce_worker(rx: mpsc::Receiver<Event>, path: PathBuf, config: Arc<Mutex<Vec<Config>>>) {
     loop {
         // Wait for the first event
         if rx.recv().is_err() {
-            // Channel closed, exit
+            tracing::debug!("channel closed");
             break;
         }
 
-        // Debounce: keep receiving until no events for `delay` seconds
-        loop {
-            match rx.recv_timeout(Duration::from_secs(delay)) {
-                Ok(()) => {
-                    // Got another event, continue waiting
-                    continue;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // No events for `delay` seconds, perform commit
-                    tracing::info!(
-                        "edited and {delay} secs past; save current contents of: {}",
-                        path.display()
-                    );
-                    if let Ok(repo) = GitRepo::new(&path)
-                        && let Err(e) = repo.save(
-                            branch.clone(),
-                            commit_message.clone(),
-                            merge_message.clone(),
-                        )
-                    {
-                        tracing::error!("{e}");
+        let confs = config.lock().unwrap();
+        if confs.is_empty() {
+            return;
+        }
+        let relative_delays = confs.iter().zip(
+            std::iter::once(confs[0].delay)
+                .chain(confs.windows(2).map(|v| v[1].delay - v[0].delay)),
+        );
+        for (conf, relative_delay) in relative_delays {
+            // Debounce: keep receiving until no events for `delay` seconds
+            loop {
+                match rx.recv_timeout(Duration::from_secs(relative_delay)) {
+                    Ok(_) => {
+                        // Got another event, continue waiting
+                        continue;
                     }
-                    break;
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    // Channel closed, exit
-                    return;
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        // No events for `delay` seconds, perform commit
+                        tracing::info!(
+                            "edited and {} secs past; save current contents of {} to branch {}",
+                            conf.delay,
+                            path.display(),
+                            &conf.branch,
+                        );
+                        if let Ok(repo) = GitRepo::new(&path)
+                            && let Err(e) = repo.save(
+                                conf.branch.clone(),
+                                conf.commit_message.clone(),
+                                conf.merge_message.clone(),
+                            )
+                        {
+                            tracing::error!("{e}");
+                        }
+                        break;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        // Channel closed, exit
+                        tracing::debug!("channel closed");
+                        return;
+                    }
                 }
             }
         }
@@ -67,21 +74,17 @@ fn debounce_worker(
 
 impl RepoWatcher {
     /// Create new watcher in specified path, specified configuration
-    pub fn new(path: impl AsRef<Path>, conf: Config) -> anyhow::Result<Self> {
+    pub fn new(path: impl AsRef<Path>, conf: Arc<Mutex<Vec<Config>>>) -> anyhow::Result<Self> {
         let path_buf = path.as_ref().to_path_buf();
 
         // Create channel for debouncing
-        let (tx, rx) = mpsc::channel::<()>();
+        let (tx, rx) = mpsc::channel();
 
         // Spawn single debounce worker thread
         let debounce_thread = {
             let path = path_buf.clone();
-            let delay = conf.delay;
-            let branch = conf.branch.clone();
-            let commit_message = conf.commit_message.clone();
-            let merge_message = conf.merge_message.clone();
             thread::spawn(move || {
-                debounce_worker(rx, path, delay, branch, commit_message, merge_message);
+                debounce_worker(rx, path, conf);
             })
         };
 
@@ -91,7 +94,9 @@ impl RepoWatcher {
                     && (ev.kind.is_create() || ev.kind.is_modify() || ev.kind.is_remove())
                 {
                     // Just send signal to debounce worker, ignore send errors
-                    let _ = tx.send(());
+                    if let Err(e) = tx.send(ev).context("send file change event error") {
+                        tracing::warn!("{e:?}");
+                    }
                 }
             })
             .context("Watcher create error")?;
