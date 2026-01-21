@@ -116,12 +116,13 @@ pub fn do_worktree(
             let gitdir = path.as_ref().join(".git/worktrees").join(&worktree_name);
 
             unsafe {
-                env::set_var(PRELOAD, cdylib_path.as_ref());
                 env::set_var("REDIRECT_FROM", path.as_ref());
+                env::set_var("REDIRECT_TO", &worktree_path);
                 env::set_var("REDIRECT_SKIP_GITIGNORE", "1");
                 // Set Git environment variables for worktree context
                 env::set_var("GIT_DIR", &gitdir);
                 env::set_var("GIT_WORK_TREE", &worktree_path);
+                env::set_var(PRELOAD, cdylib_path.as_ref());
             }
 
             let pid = unistd::Pid::from_raw(0);

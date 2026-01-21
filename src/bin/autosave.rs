@@ -19,6 +19,11 @@ const CDYLIB_EXT: &str = "so";
 const CDYLIB_EXT: &str = "dylib";
 
 fn main() {
+    unsafe {
+        env::remove_var("REDIRECT_FROM");
+        env::remove_var("REDIRECT_TO");
+    }
+
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_filter(
