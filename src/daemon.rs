@@ -4,6 +4,7 @@ use daemonize::{Daemonize, Outcome};
 use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::exit;
 
 mod api;
 
@@ -79,7 +80,8 @@ pub fn start_daemon(tracing_handle: &types::TracingReloadHandle) -> anyhow::Resu
                 })
                 .context("failed to update tracing logger")?;
             res.context("failed to start daemon; error from child")?;
-            run_server(&sock_path)
+            run_server(&sock_path)?;
+            exit(0);
         }
     }
 }
@@ -94,6 +96,7 @@ async fn run_server(sock_path: &Path) -> anyhow::Result<()> {
     let app = api::routes().with_state(state);
     tracing::info!("daemon setup finished; start daemon");
     axum::serve(sock, app)
+        .with_graceful_shutdown(api::kill_signal())
         .await
         .context("failed to serve API service")
 }

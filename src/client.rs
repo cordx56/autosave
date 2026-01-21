@@ -53,6 +53,20 @@ pub fn change_watch_list(change: types::ChangeWatchRequest) -> anyhow::Result<()
     }
 }
 
+/// send kill request
+#[tracing::instrument]
+pub fn kill() -> anyhow::Result<()> {
+    let resp = get_client()?
+        .post("http://localhost/kill")
+        .send()
+        .context("failed to get response")?;
+    let data: types::ApiResponse<()> = resp.json().context("failed to read response")?;
+    match data {
+        types::ApiResponse::Success { .. } => Ok(()),
+        types::ApiResponse::Failed { message } => anyhow::bail!(message),
+    }
+}
+
 #[cfg(target_os = "linux")]
 const PRELOAD: &str = "LD_PRELOAD";
 #[cfg(target_os = "macos")]

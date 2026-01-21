@@ -37,6 +37,8 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_hint = ValueHint::CommandWithArguments, help = "Command to execute")]
         args: Option<Vec<String>>,
     },
+    /// Kill autosave daemon
+    Kill,
 }
 
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -168,6 +170,13 @@ pub extern "C" fn main(cdylib_path: *const ffi::c_char) {
                     exit(1);
                 }
             };
+        }
+        Some(Command::Kill) => {
+            let resp = client::kill().context("failed to kill the daemon");
+            if let Err(e) = resp {
+                tracing::error!("{e:?}");
+                exit(1);
+            }
         }
     }
     exit(0);
