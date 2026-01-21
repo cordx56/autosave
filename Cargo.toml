@@ -3,11 +3,11 @@ name = "autosave"
 version = "0.1.0"
 edition = "2024"
 authors = ["cordx56 <cordx56@cordx.cx>"]
-description = "Watch file changes and automatically save changed file to the local Git repository as a commit"
+description = "Automatically save all your changes to the repository"
 readme = "README.md"
 repository = "https://github.com/cordx56/autosave"
 license = "MPL-2.0"
-keywords = ["git", "backup"]
+keywords = ["git", "backup", "sandbox", "llm"]
 categories = ["command-line-utilities"]
 
 [lib]
