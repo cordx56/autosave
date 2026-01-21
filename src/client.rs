@@ -113,16 +113,8 @@ pub fn do_worktree(
     let child_pid = match unsafe { unistd::fork().context("failed to start child process")? } {
         unistd::ForkResult::Parent { child } => child,
         unistd::ForkResult::Child => {
+            tracing::debug!("process forked; this is child");
             let gitdir = path.as_ref().join(".git/worktrees").join(&worktree_name);
-
-            unsafe {
-                env::set_var(PRELOAD, cdylib_path.as_ref());
-                env::set_var("REDIRECT_FROM", path.as_ref());
-                env::set_var("REDIRECT_SKIP_GITIGNORE", "1");
-                // Set Git environment variables for worktree context
-                env::set_var("GIT_DIR", &gitdir);
-                env::set_var("GIT_WORK_TREE", &worktree_path);
-            }
 
             let pid = unistd::Pid::from_raw(0);
             unistd::setpgid(pid, pid).context("failed to set child's process group")?;
@@ -130,6 +122,16 @@ pub fn do_worktree(
             // ignore tty setup error
             let _ = tty_tcsetpgrp(unistd::getpgrp());
 
+            unsafe {
+                env::set_var("REDIRECT_FROM", path.as_ref());
+                env::set_var("REDIRECT_SKIP_GITIGNORE", "1");
+                // Set Git environment variables for worktree context
+                env::set_var("GIT_DIR", &gitdir);
+                env::set_var("GIT_WORK_TREE", &worktree_path);
+                env::set_var(PRELOAD, cdylib_path.as_ref());
+            }
+
+            tracing::debug!("execvp: {command:?}");
             unistd::execvp(&command, &args).context("failed to start child process")?;
             unreachable!();
         }

@@ -53,11 +53,20 @@ static mut REDIRECT_TO: Option<String> = None;
 static mut SKIP_GITIGNORE: bool = false;
 
 fn get_redirect() -> Option<(&'static str, &'static str)> {
-    unsafe {
-        match (REDIRECT_FROM.as_ref(), REDIRECT_TO.as_ref()) {
-            (Some(from), Some(to)) => Some((from.as_str(), to.as_str())),
-            _ => None,
+    // reload env var all times - macOS required them (I don't know why)
+    if let Ok(from) = std::env::var("REDIRECT_FROM")
+        && let Ok(to) = std::env::var("REDIRECT_TO")
+    {
+        unsafe {
+            REDIRECT_FROM = Some(from);
+            REDIRECT_TO = Some(to);
+            match (REDIRECT_FROM.as_ref(), REDIRECT_TO.as_ref()) {
+                (Some(from), Some(to)) => Some((from.as_str(), to.as_str())),
+                _ => None,
+            }
         }
+    } else {
+        None
     }
 }
 
@@ -147,6 +156,32 @@ fn get_redirect_path(path: *const c_char) -> Option<CString> {
     redirect_path_str(path_str)
 }
 
+/// Get the path from a file descriptor (platform-specific)
+#[cfg(target_os = "linux")]
+fn get_path_from_fd(fd: c_int) -> Option<PathBuf> {
+    let fd_path = format!("/proc/self/fd/{}", fd);
+    std::fs::read_link(&fd_path).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn get_path_from_fd(fd: c_int) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    // Use fcntl F_GETPATH on macOS
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    let ret = unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) };
+    if ret == -1 {
+        return None;
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    buf.truncate(len);
+    Some(PathBuf::from(std::ffi::OsString::from_vec(buf)))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn get_path_from_fd(_fd: c_int) -> Option<PathBuf> {
+    None
+}
+
 /// Get redirect path for *at functions
 fn get_redirect_path_at(dirfd: c_int, path: *const c_char) -> Option<CString> {
     if path.is_null() {
@@ -163,9 +198,8 @@ fn get_redirect_path_at(dirfd: c_int, path: *const c_char) -> Option<CString> {
         // Relative path with AT_FDCWD - resolve against cwd
         redirect_path_str(path_str)
     } else {
-        // Relative path with specific dirfd - try to resolve via /proc/self/fd
-        let fd_path = format!("/proc/self/fd/{}", dirfd);
-        if let Ok(resolved) = std::fs::read_link(&fd_path) {
+        // Relative path with specific dirfd - try to resolve fd to path
+        if let Some(resolved) = get_path_from_fd(dirfd) {
             let full_path = resolved.join(path_str);
             let full_path_str = full_path.to_str()?;
             redirect_path_str(full_path_str)
@@ -186,25 +220,40 @@ fn load_original<T>(name: &[u8]) -> Option<T> {
 
 // Type aliases for function pointers
 type OpenFn = unsafe extern "C" fn(*const c_char, c_int, mode_t) -> c_int;
+#[cfg(target_os = "linux")]
 type Open64Fn = unsafe extern "C" fn(*const c_char, c_int, mode_t) -> c_int;
 type OpenatFn = unsafe extern "C" fn(c_int, *const c_char, c_int, mode_t) -> c_int;
+#[cfg(target_os = "linux")]
 type Openat64Fn = unsafe extern "C" fn(c_int, *const c_char, c_int, mode_t) -> c_int;
 type CreatFn = unsafe extern "C" fn(*const c_char, mode_t) -> c_int;
+#[cfg(target_os = "linux")]
 type Creat64Fn = unsafe extern "C" fn(*const c_char, mode_t) -> c_int;
 type StatFn = unsafe extern "C" fn(*const c_char, *mut stat) -> c_int;
+#[cfg(target_os = "linux")]
 type Stat64Fn = unsafe extern "C" fn(*const c_char, *mut stat64) -> c_int;
 type LstatFn = unsafe extern "C" fn(*const c_char, *mut stat) -> c_int;
+#[cfg(target_os = "linux")]
 type Lstat64Fn = unsafe extern "C" fn(*const c_char, *mut stat64) -> c_int;
 type FstatatFn = unsafe extern "C" fn(c_int, *const c_char, *mut stat, c_int) -> c_int;
+#[cfg(target_os = "linux")]
 type Fstatat64Fn = unsafe extern "C" fn(c_int, *const c_char, *mut stat64, c_int) -> c_int;
+#[cfg(target_os = "linux")]
 type StatxFn = unsafe extern "C" fn(c_int, *const c_char, c_int, c_uint, *mut statx) -> c_int;
+#[cfg(target_os = "linux")]
 type XstatFn = unsafe extern "C" fn(c_int, *const c_char, *mut stat) -> c_int;
+#[cfg(target_os = "linux")]
 type Xstat64Fn = unsafe extern "C" fn(c_int, *const c_char, *mut stat64) -> c_int;
+#[cfg(target_os = "linux")]
 type LxstatFn = unsafe extern "C" fn(c_int, *const c_char, *mut stat) -> c_int;
+#[cfg(target_os = "linux")]
 type Lxstat64Fn = unsafe extern "C" fn(c_int, *const c_char, *mut stat64) -> c_int;
+#[cfg(target_os = "linux")]
 type FxstatFn = unsafe extern "C" fn(c_int, c_int, *mut stat) -> c_int;
+#[cfg(target_os = "linux")]
 type Fxstat64Fn = unsafe extern "C" fn(c_int, c_int, *mut stat64) -> c_int;
+#[cfg(target_os = "linux")]
 type FxstatatFn = unsafe extern "C" fn(c_int, c_int, *const c_char, *mut stat, c_int) -> c_int;
+#[cfg(target_os = "linux")]
 type Fxstatat64Fn = unsafe extern "C" fn(c_int, c_int, *const c_char, *mut stat64, c_int) -> c_int;
 type AccessFn = unsafe extern "C" fn(*const c_char, c_int) -> c_int;
 type FaccessatFn = unsafe extern "C" fn(c_int, *const c_char, c_int, c_int) -> c_int;
@@ -217,9 +266,11 @@ type UnlinkFn = unsafe extern "C" fn(*const c_char) -> c_int;
 type UnlinkatFn = unsafe extern "C" fn(c_int, *const c_char, c_int) -> c_int;
 type RenameFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
 type RenameatFn = unsafe extern "C" fn(c_int, *const c_char, c_int, *const c_char) -> c_int;
+#[cfg(target_os = "linux")]
 type Renameat2Fn =
     unsafe extern "C" fn(c_int, *const c_char, c_int, *const c_char, c_uint) -> c_int;
 type TruncateFn = unsafe extern "C" fn(*const c_char, off_t) -> c_int;
+#[cfg(target_os = "linux")]
 type Truncate64Fn = unsafe extern "C" fn(*const c_char, off64_t) -> c_int;
 type LinkFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
 type LinkatFn = unsafe extern "C" fn(c_int, *const c_char, c_int, *const c_char, c_int) -> c_int;
@@ -236,18 +287,28 @@ type RealpathFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> *mut c_cha
 type UtimeFn = unsafe extern "C" fn(*const c_char, *const utimbuf) -> c_int;
 type UtimesFn = unsafe extern "C" fn(*const c_char, *const timeval) -> c_int;
 type UtimensatFn = unsafe extern "C" fn(c_int, *const c_char, *const timespec, c_int) -> c_int;
+#[cfg(target_os = "linux")]
 type FutimesatFn = unsafe extern "C" fn(c_int, *const c_char, *const timeval) -> c_int;
+// Linux xattr functions (4 args)
+#[cfg(target_os = "linux")]
 type GetxattrFn =
     unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void, size_t) -> ssize_t;
+#[cfg(target_os = "linux")]
 type LgetxattrFn =
     unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void, size_t) -> ssize_t;
+#[cfg(target_os = "linux")]
 type SetxattrFn =
     unsafe extern "C" fn(*const c_char, *const c_char, *const c_void, size_t, c_int) -> c_int;
+#[cfg(target_os = "linux")]
 type LsetxattrFn =
     unsafe extern "C" fn(*const c_char, *const c_char, *const c_void, size_t, c_int) -> c_int;
+#[cfg(target_os = "linux")]
 type ListxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, size_t) -> ssize_t;
+#[cfg(target_os = "linux")]
 type LlistxattrFn = unsafe extern "C" fn(*const c_char, *mut c_char, size_t) -> ssize_t;
+#[cfg(target_os = "linux")]
 type RemovexattrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
+#[cfg(target_os = "linux")]
 type LremovexattrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
 type ExecveFn =
     unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
@@ -257,25 +318,40 @@ type ExecvFn = unsafe extern "C" fn(*const c_char, *const *const c_char) -> c_in
 #[allow(non_snake_case)]
 struct OriginalFunctions {
     open: Option<OpenFn>,
+    #[cfg(target_os = "linux")]
     open64: Option<Open64Fn>,
     openat: Option<OpenatFn>,
+    #[cfg(target_os = "linux")]
     openat64: Option<Openat64Fn>,
     creat: Option<CreatFn>,
+    #[cfg(target_os = "linux")]
     creat64: Option<Creat64Fn>,
     stat: Option<StatFn>,
+    #[cfg(target_os = "linux")]
     stat64: Option<Stat64Fn>,
     lstat: Option<LstatFn>,
+    #[cfg(target_os = "linux")]
     lstat64: Option<Lstat64Fn>,
     fstatat: Option<FstatatFn>,
+    #[cfg(target_os = "linux")]
     fstatat64: Option<Fstatat64Fn>,
+    #[cfg(target_os = "linux")]
     statx: Option<StatxFn>,
+    #[cfg(target_os = "linux")]
     __xstat: Option<XstatFn>,
+    #[cfg(target_os = "linux")]
     __xstat64: Option<Xstat64Fn>,
+    #[cfg(target_os = "linux")]
     __lxstat: Option<LxstatFn>,
+    #[cfg(target_os = "linux")]
     __lxstat64: Option<Lxstat64Fn>,
+    #[cfg(target_os = "linux")]
     __fxstat: Option<FxstatFn>,
+    #[cfg(target_os = "linux")]
     __fxstat64: Option<Fxstat64Fn>,
+    #[cfg(target_os = "linux")]
     __fxstatat: Option<FxstatatFn>,
+    #[cfg(target_os = "linux")]
     __fxstatat64: Option<Fxstatat64Fn>,
     access: Option<AccessFn>,
     faccessat: Option<FaccessatFn>,
@@ -288,8 +364,10 @@ struct OriginalFunctions {
     unlinkat: Option<UnlinkatFn>,
     rename: Option<RenameFn>,
     renameat: Option<RenameatFn>,
+    #[cfg(target_os = "linux")]
     renameat2: Option<Renameat2Fn>,
     truncate: Option<TruncateFn>,
+    #[cfg(target_os = "linux")]
     truncate64: Option<Truncate64Fn>,
     link: Option<LinkFn>,
     linkat: Option<LinkatFn>,
@@ -306,14 +384,23 @@ struct OriginalFunctions {
     utime: Option<UtimeFn>,
     utimes: Option<UtimesFn>,
     utimensat: Option<UtimensatFn>,
+    #[cfg(target_os = "linux")]
     futimesat: Option<FutimesatFn>,
+    #[cfg(target_os = "linux")]
     getxattr: Option<GetxattrFn>,
+    #[cfg(target_os = "linux")]
     lgetxattr: Option<LgetxattrFn>,
+    #[cfg(target_os = "linux")]
     setxattr: Option<SetxattrFn>,
+    #[cfg(target_os = "linux")]
     lsetxattr: Option<LsetxattrFn>,
+    #[cfg(target_os = "linux")]
     listxattr: Option<ListxattrFn>,
+    #[cfg(target_os = "linux")]
     llistxattr: Option<LlistxattrFn>,
+    #[cfg(target_os = "linux")]
     removexattr: Option<RemovexattrFn>,
+    #[cfg(target_os = "linux")]
     lremovexattr: Option<LremovexattrFn>,
     execve: Option<ExecveFn>,
     execv: Option<ExecvFn>,
@@ -321,25 +408,40 @@ struct OriginalFunctions {
 
 static mut ORIGINAL: OriginalFunctions = OriginalFunctions {
     open: None,
+    #[cfg(target_os = "linux")]
     open64: None,
     openat: None,
+    #[cfg(target_os = "linux")]
     openat64: None,
     creat: None,
+    #[cfg(target_os = "linux")]
     creat64: None,
     stat: None,
+    #[cfg(target_os = "linux")]
     stat64: None,
     lstat: None,
+    #[cfg(target_os = "linux")]
     lstat64: None,
     fstatat: None,
+    #[cfg(target_os = "linux")]
     fstatat64: None,
+    #[cfg(target_os = "linux")]
     statx: None,
+    #[cfg(target_os = "linux")]
     __xstat: None,
+    #[cfg(target_os = "linux")]
     __xstat64: None,
+    #[cfg(target_os = "linux")]
     __lxstat: None,
+    #[cfg(target_os = "linux")]
     __lxstat64: None,
+    #[cfg(target_os = "linux")]
     __fxstat: None,
+    #[cfg(target_os = "linux")]
     __fxstat64: None,
+    #[cfg(target_os = "linux")]
     __fxstatat: None,
+    #[cfg(target_os = "linux")]
     __fxstatat64: None,
     access: None,
     faccessat: None,
@@ -352,8 +454,10 @@ static mut ORIGINAL: OriginalFunctions = OriginalFunctions {
     unlinkat: None,
     rename: None,
     renameat: None,
+    #[cfg(target_os = "linux")]
     renameat2: None,
     truncate: None,
+    #[cfg(target_os = "linux")]
     truncate64: None,
     link: None,
     linkat: None,
@@ -370,14 +474,23 @@ static mut ORIGINAL: OriginalFunctions = OriginalFunctions {
     utime: None,
     utimes: None,
     utimensat: None,
+    #[cfg(target_os = "linux")]
     futimesat: None,
+    #[cfg(target_os = "linux")]
     getxattr: None,
+    #[cfg(target_os = "linux")]
     lgetxattr: None,
+    #[cfg(target_os = "linux")]
     setxattr: None,
+    #[cfg(target_os = "linux")]
     lsetxattr: None,
+    #[cfg(target_os = "linux")]
     listxattr: None,
+    #[cfg(target_os = "linux")]
     llistxattr: None,
+    #[cfg(target_os = "linux")]
     removexattr: None,
+    #[cfg(target_os = "linux")]
     lremovexattr: None,
     execve: None,
     execv: None,
@@ -385,31 +498,49 @@ static mut ORIGINAL: OriginalFunctions = OriginalFunctions {
 
 /// Library constructor - initializes all original function pointers and environment
 #[ctor]
-unsafe fn init() {
+pub unsafe fn init() {
     // Pre-load all original function pointers FIRST
     // This must happen before any git2 operations which call libc functions
     unsafe {
         ORIGINAL.open = load_original(b"open\0");
-        ORIGINAL.open64 = load_original(b"open64\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.open64 = load_original(b"open64\0");
+        }
         ORIGINAL.openat = load_original(b"openat\0");
-        ORIGINAL.openat64 = load_original(b"openat64\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.openat64 = load_original(b"openat64\0");
+        }
         ORIGINAL.creat = load_original(b"creat\0");
-        ORIGINAL.creat64 = load_original(b"creat64\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.creat64 = load_original(b"creat64\0");
+        }
         ORIGINAL.stat = load_original(b"stat\0");
-        ORIGINAL.stat64 = load_original(b"stat64\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.stat64 = load_original(b"stat64\0");
+        }
         ORIGINAL.lstat = load_original(b"lstat\0");
-        ORIGINAL.lstat64 = load_original(b"lstat64\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.lstat64 = load_original(b"lstat64\0");
+        }
         ORIGINAL.fstatat = load_original(b"fstatat\0");
-        ORIGINAL.fstatat64 = load_original(b"fstatat64\0");
-        ORIGINAL.statx = load_original(b"statx\0");
-        ORIGINAL.__xstat = load_original(b"__xstat\0");
-        ORIGINAL.__xstat64 = load_original(b"__xstat64\0");
-        ORIGINAL.__lxstat = load_original(b"__lxstat\0");
-        ORIGINAL.__lxstat64 = load_original(b"__lxstat64\0");
-        ORIGINAL.__fxstat = load_original(b"__fxstat\0");
-        ORIGINAL.__fxstat64 = load_original(b"__fxstat64\0");
-        ORIGINAL.__fxstatat = load_original(b"__fxstatat\0");
-        ORIGINAL.__fxstatat64 = load_original(b"__fxstatat64\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.fstatat64 = load_original(b"fstatat64\0");
+            ORIGINAL.statx = load_original(b"statx\0");
+            ORIGINAL.__xstat = load_original(b"__xstat\0");
+            ORIGINAL.__xstat64 = load_original(b"__xstat64\0");
+            ORIGINAL.__lxstat = load_original(b"__lxstat\0");
+            ORIGINAL.__lxstat64 = load_original(b"__lxstat64\0");
+            ORIGINAL.__fxstat = load_original(b"__fxstat\0");
+            ORIGINAL.__fxstat64 = load_original(b"__fxstat64\0");
+            ORIGINAL.__fxstatat = load_original(b"__fxstatat\0");
+            ORIGINAL.__fxstatat64 = load_original(b"__fxstatat64\0");
+        }
         ORIGINAL.access = load_original(b"access\0");
         ORIGINAL.faccessat = load_original(b"faccessat\0");
         ORIGINAL.opendir = load_original(b"opendir\0");
@@ -421,9 +552,15 @@ unsafe fn init() {
         ORIGINAL.unlinkat = load_original(b"unlinkat\0");
         ORIGINAL.rename = load_original(b"rename\0");
         ORIGINAL.renameat = load_original(b"renameat\0");
-        ORIGINAL.renameat2 = load_original(b"renameat2\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.renameat2 = load_original(b"renameat2\0");
+        }
         ORIGINAL.truncate = load_original(b"truncate\0");
-        ORIGINAL.truncate64 = load_original(b"truncate64\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.truncate64 = load_original(b"truncate64\0");
+        }
         ORIGINAL.link = load_original(b"link\0");
         ORIGINAL.linkat = load_original(b"linkat\0");
         ORIGINAL.symlink = load_original(b"symlink\0");
@@ -439,31 +576,26 @@ unsafe fn init() {
         ORIGINAL.utime = load_original(b"utime\0");
         ORIGINAL.utimes = load_original(b"utimes\0");
         ORIGINAL.utimensat = load_original(b"utimensat\0");
-        ORIGINAL.futimesat = load_original(b"futimesat\0");
-        ORIGINAL.getxattr = load_original(b"getxattr\0");
-        ORIGINAL.lgetxattr = load_original(b"lgetxattr\0");
-        ORIGINAL.setxattr = load_original(b"setxattr\0");
-        ORIGINAL.lsetxattr = load_original(b"lsetxattr\0");
-        ORIGINAL.listxattr = load_original(b"listxattr\0");
-        ORIGINAL.llistxattr = load_original(b"llistxattr\0");
-        ORIGINAL.removexattr = load_original(b"removexattr\0");
-        ORIGINAL.lremovexattr = load_original(b"lremovexattr\0");
+        #[cfg(target_os = "linux")]
+        {
+            ORIGINAL.futimesat = load_original(b"futimesat\0");
+            ORIGINAL.getxattr = load_original(b"getxattr\0");
+            ORIGINAL.lgetxattr = load_original(b"lgetxattr\0");
+            ORIGINAL.setxattr = load_original(b"setxattr\0");
+            ORIGINAL.lsetxattr = load_original(b"lsetxattr\0");
+            ORIGINAL.listxattr = load_original(b"listxattr\0");
+            ORIGINAL.llistxattr = load_original(b"llistxattr\0");
+            ORIGINAL.removexattr = load_original(b"removexattr\0");
+            ORIGINAL.lremovexattr = load_original(b"lremovexattr\0");
+        }
         ORIGINAL.execve = load_original(b"execve\0");
         ORIGINAL.execv = load_original(b"execv\0");
     }
 
-    // Now load environment variables (after original functions are available)
-    if let Ok(from) = std::env::var("REDIRECT_FROM")
-        && let Ok(to) = std::env::var("REDIRECT_TO")
-    {
-        // Check if we should skip gitignored paths
-        SKIP_GITIGNORE = std::env::var("REDIRECT_SKIP_GITIGNORE")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(true);
-
-        REDIRECT_FROM = Some(from);
-        REDIRECT_TO = Some(to);
-    }
+    // Check if we should skip gitignored paths
+    SKIP_GITIGNORE = std::env::var("REDIRECT_SKIP_GITIGNORE")
+        .map(|v| v != "0" && v.to_lowercase() != "false")
+        .unwrap_or(true);
 }
 
 //
@@ -476,6 +608,9 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: mode_t) -
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, flags, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -487,12 +622,16 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: mode_t) -
     f(actual, flags, mode)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn open64(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
     let f = match ORIGINAL.open64 {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, flags, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -515,6 +654,9 @@ pub unsafe extern "C" fn openat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, flags, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -526,6 +668,7 @@ pub unsafe extern "C" fn openat(
     f(dirfd, actual, flags, mode)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn openat64(
     dirfd: c_int,
@@ -537,6 +680,9 @@ pub unsafe extern "C" fn openat64(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, flags, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -554,6 +700,9 @@ pub unsafe extern "C" fn creat(path: *const c_char, mode: mode_t) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -565,12 +714,16 @@ pub unsafe extern "C" fn creat(path: *const c_char, mode: mode_t) -> c_int {
     f(actual, mode)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn creat64(path: *const c_char, mode: mode_t) -> c_int {
     let f = match ORIGINAL.creat64 {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -592,6 +745,9 @@ pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut stat) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -603,12 +759,16 @@ pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut stat) -> c_int {
     f(actual, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn stat64(path: *const c_char, buf: *mut stat64) -> c_int {
     let f = match ORIGINAL.stat64 {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -626,6 +786,9 @@ pub unsafe extern "C" fn lstat(path: *const c_char, buf: *mut stat) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -637,12 +800,16 @@ pub unsafe extern "C" fn lstat(path: *const c_char, buf: *mut stat) -> c_int {
     f(actual, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lstat64(path: *const c_char, buf: *mut stat64) -> c_int {
     let f = match ORIGINAL.lstat64 {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -665,6 +832,9 @@ pub unsafe extern "C" fn fstatat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, buf, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -676,6 +846,7 @@ pub unsafe extern "C" fn fstatat(
     f(dirfd, actual, buf, flags)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fstatat64(
     dirfd: c_int,
@@ -687,6 +858,9 @@ pub unsafe extern "C" fn fstatat64(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, buf, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -698,6 +872,7 @@ pub unsafe extern "C" fn fstatat64(
     f(dirfd, actual, buf, flags)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn statx(
     dirfd: c_int,
@@ -710,6 +885,9 @@ pub unsafe extern "C" fn statx(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, flags, mask, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -722,15 +900,19 @@ pub unsafe extern "C" fn statx(
 }
 
 //
-// Glibc internal stat functions
+// Glibc internal stat functions (Linux only)
 //
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __xstat(ver: c_int, path: *const c_char, buf: *mut stat) -> c_int {
     let f = match ORIGINAL.__xstat {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -742,12 +924,16 @@ pub unsafe extern "C" fn __xstat(ver: c_int, path: *const c_char, buf: *mut stat
     f(ver, actual, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __xstat64(ver: c_int, path: *const c_char, buf: *mut stat64) -> c_int {
     let f = match ORIGINAL.__xstat64 {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -759,12 +945,16 @@ pub unsafe extern "C" fn __xstat64(ver: c_int, path: *const c_char, buf: *mut st
     f(ver, actual, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __lxstat(ver: c_int, path: *const c_char, buf: *mut stat) -> c_int {
     let f = match ORIGINAL.__lxstat {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -776,12 +966,16 @@ pub unsafe extern "C" fn __lxstat(ver: c_int, path: *const c_char, buf: *mut sta
     f(ver, actual, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __lxstat64(ver: c_int, path: *const c_char, buf: *mut stat64) -> c_int {
     let f = match ORIGINAL.__lxstat64 {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, path, buf);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -793,6 +987,7 @@ pub unsafe extern "C" fn __lxstat64(ver: c_int, path: *const c_char, buf: *mut s
     f(ver, actual, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __fxstat(ver: c_int, fd: c_int, buf: *mut stat) -> c_int {
     // fxstat operates on fd, no path to redirect, but still need recursion guard
@@ -800,9 +995,13 @@ pub unsafe extern "C" fn __fxstat(ver: c_int, fd: c_int, buf: *mut stat) -> c_in
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, fd, buf);
+    }
     f(ver, fd, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __fxstat64(ver: c_int, fd: c_int, buf: *mut stat64) -> c_int {
     // fxstat operates on fd, no path to redirect
@@ -810,9 +1009,13 @@ pub unsafe extern "C" fn __fxstat64(ver: c_int, fd: c_int, buf: *mut stat64) -> 
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, fd, buf);
+    }
     f(ver, fd, buf)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __fxstatat(
     ver: c_int,
@@ -825,6 +1028,9 @@ pub unsafe extern "C" fn __fxstatat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, dirfd, path, buf, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -836,6 +1042,7 @@ pub unsafe extern "C" fn __fxstatat(
     f(ver, dirfd, actual, buf, flags)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __fxstatat64(
     ver: c_int,
@@ -848,6 +1055,9 @@ pub unsafe extern "C" fn __fxstatat64(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(ver, dirfd, path, buf, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -869,6 +1079,9 @@ pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -891,6 +1104,9 @@ pub unsafe extern "C" fn faccessat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, mode, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -912,6 +1128,9 @@ pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut DIR {
         Some(f) => f,
         None => return std::ptr::null_mut(),
     };
+    if get_redirect().is_none() {
+        return f(path);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -929,6 +1148,9 @@ pub unsafe extern "C" fn mkdir(path: *const c_char, mode: mode_t) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -946,6 +1168,9 @@ pub unsafe extern "C" fn mkdirat(dirfd: c_int, path: *const c_char, mode: mode_t
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -963,6 +1188,9 @@ pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -980,6 +1208,9 @@ pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1001,6 +1232,9 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1018,6 +1252,9 @@ pub unsafe extern "C" fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_in
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1035,6 +1272,9 @@ pub unsafe extern "C" fn rename(oldpath: *const c_char, newpath: *const c_char) 
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(oldpath, newpath);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1059,6 +1299,9 @@ pub unsafe extern "C" fn renameat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(olddirfd, oldpath, newdirfd, newpath);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1072,6 +1315,7 @@ pub unsafe extern "C" fn renameat(
     f(olddirfd, actual_old, newdirfd, actual_new)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn renameat2(
     olddirfd: c_int,
@@ -1084,6 +1328,9 @@ pub unsafe extern "C" fn renameat2(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(olddirfd, oldpath, newdirfd, newpath, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1103,6 +1350,9 @@ pub unsafe extern "C" fn truncate(path: *const c_char, length: off_t) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, length);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1114,12 +1364,16 @@ pub unsafe extern "C" fn truncate(path: *const c_char, length: off_t) -> c_int {
     f(actual, length)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn truncate64(path: *const c_char, length: off64_t) -> c_int {
     let f = match ORIGINAL.truncate64 {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, length);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1141,6 +1395,9 @@ pub unsafe extern "C" fn link(oldpath: *const c_char, newpath: *const c_char) ->
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(oldpath, newpath);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1166,6 +1423,9 @@ pub unsafe extern "C" fn linkat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(olddirfd, oldpath, newdirfd, newpath, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1185,6 +1445,9 @@ pub unsafe extern "C" fn symlink(target: *const c_char, linkpath: *const c_char)
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(target, linkpath);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1208,6 +1471,9 @@ pub unsafe extern "C" fn symlinkat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(target, newdirfd, linkpath);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1229,6 +1495,9 @@ pub unsafe extern "C" fn readlink(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, buf, bufsize);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1251,6 +1520,9 @@ pub unsafe extern "C" fn readlinkat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, buf, bufsize);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1272,6 +1544,9 @@ pub unsafe extern "C" fn chmod(path: *const c_char, mode: mode_t) -> c_int {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, mode);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1294,6 +1569,9 @@ pub unsafe extern "C" fn fchmodat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, mode, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1311,6 +1589,9 @@ pub unsafe extern "C" fn chown(path: *const c_char, owner: uid_t, group: gid_t) 
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, owner, group);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1328,6 +1609,9 @@ pub unsafe extern "C" fn lchown(path: *const c_char, owner: uid_t, group: gid_t)
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, owner, group);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1351,6 +1635,9 @@ pub unsafe extern "C" fn fchownat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, owner, group, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1372,6 +1659,9 @@ pub unsafe extern "C" fn realpath(path: *const c_char, resolved_path: *mut c_cha
         Some(f) => f,
         None => return std::ptr::null_mut(),
     };
+    if get_redirect().is_none() {
+        return f(path, resolved_path);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1389,6 +1679,9 @@ pub unsafe extern "C" fn utime(path: *const c_char, times: *const utimbuf) -> c_
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, times);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1406,6 +1699,9 @@ pub unsafe extern "C" fn utimes(path: *const c_char, times: *const timeval) -> c
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, times);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1428,6 +1724,9 @@ pub unsafe extern "C" fn utimensat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, times, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1439,6 +1738,7 @@ pub unsafe extern "C" fn utimensat(
     f(dirfd, actual, times, flags)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn futimesat(
     dirfd: c_int,
@@ -1449,6 +1749,9 @@ pub unsafe extern "C" fn futimesat(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(dirfd, path, times);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1461,9 +1764,10 @@ pub unsafe extern "C" fn futimesat(
 }
 
 //
-// Extended attribute functions
+// Extended attribute functions (Linux only - macOS has different signatures)
 //
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getxattr(
     path: *const c_char,
@@ -1475,6 +1779,9 @@ pub unsafe extern "C" fn getxattr(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, name, value, size);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1486,6 +1793,7 @@ pub unsafe extern "C" fn getxattr(
     f(actual, name, value, size)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lgetxattr(
     path: *const c_char,
@@ -1497,6 +1805,9 @@ pub unsafe extern "C" fn lgetxattr(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, name, value, size);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1508,6 +1819,7 @@ pub unsafe extern "C" fn lgetxattr(
     f(actual, name, value, size)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setxattr(
     path: *const c_char,
@@ -1520,6 +1832,9 @@ pub unsafe extern "C" fn setxattr(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, name, value, size, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1531,6 +1846,7 @@ pub unsafe extern "C" fn setxattr(
     f(actual, name, value, size, flags)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lsetxattr(
     path: *const c_char,
@@ -1543,6 +1859,9 @@ pub unsafe extern "C" fn lsetxattr(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, name, value, size, flags);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1554,6 +1873,7 @@ pub unsafe extern "C" fn lsetxattr(
     f(actual, name, value, size, flags)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn listxattr(
     path: *const c_char,
@@ -1564,6 +1884,9 @@ pub unsafe extern "C" fn listxattr(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, list, size);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1575,6 +1898,7 @@ pub unsafe extern "C" fn listxattr(
     f(actual, list, size)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn llistxattr(
     path: *const c_char,
@@ -1585,6 +1909,9 @@ pub unsafe extern "C" fn llistxattr(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, list, size);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1596,12 +1923,16 @@ pub unsafe extern "C" fn llistxattr(
     f(actual, list, size)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn removexattr(path: *const c_char, name: *const c_char) -> c_int {
     let f = match ORIGINAL.removexattr {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, name);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1613,12 +1944,16 @@ pub unsafe extern "C" fn removexattr(path: *const c_char, name: *const c_char) -
     f(actual, name)
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) -> c_int {
     let f = match ORIGINAL.lremovexattr {
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, name);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1644,6 +1979,9 @@ pub unsafe extern "C" fn execve(
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, argv, envp);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
@@ -1661,6 +1999,9 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
         Some(f) => f,
         None => return -1,
     };
+    if get_redirect().is_none() {
+        return f(path, argv);
+    }
 
     let _guard = match RecursionGuard::try_enter() {
         Some(g) => g,
