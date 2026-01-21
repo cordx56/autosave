@@ -95,12 +95,14 @@ impl DyLib {
                 .get(b"version")
                 .context("failed to load version function")?;
             let ptr = func();
-            Ok(ffi::CString::from_raw(ptr).to_string_lossy().to_string())
+            Ok(ffi::CString::from_raw(ptr as *mut ffi::c_char)
+                .to_string_lossy()
+                .to_string())
         }
     }
     pub fn main(&self, cdylib_path: &Path) -> anyhow::Result<()> {
         let cdylib_str = cdylib_path.to_string_lossy().to_string();
-        let cdylib_cstr = unsafe { ffi::CStr::from_ptr(cdylib_str.as_ptr()) };
+        let cdylib_cstr = unsafe { ffi::CStr::from_ptr(cdylib_str.as_ptr() as *const ffi::c_char) };
         unsafe {
             let func: Symbol<unsafe extern "C" fn(*const ffi::c_char)> =
                 self.cdylib

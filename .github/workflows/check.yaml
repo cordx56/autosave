@@ -29,7 +29,7 @@ jobs:
         run: cargo clippy
 
   deny:
-    name: Format & Lint
+    name: Check deny
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
