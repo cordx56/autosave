@@ -53,8 +53,8 @@ jobs:
         run: |
           HOST_TUPLE="$(rustc --print=host-tuple)"
           mkdir release
-          cp "target/release/libautosave.so"    "release/libautosave-$HOST_TUPLE.so"
-          cp "target/release/libautosave.dylib" "release/libautosave-$HOST_TUPLE.dylib"
+          cp "target/release/libautosave.so"    "release/libautosave-$HOST_TUPLE.so"    || true
+          cp "target/release/libautosave.dylib" "release/libautosave-$HOST_TUPLE.dylib" || true
           cp "target/release/autosave"          "release/autosave-$HOST_TUPLE"
           cp "install.sh"                       "release/"
 
