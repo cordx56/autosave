@@ -18,7 +18,7 @@ jobs:
     needs:
       - check
     steps:
-      - uses: actions/checkout@6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -41,7 +41,7 @@ jobs:
     needs:
       - check
     steps:
-      - uses: actions/checkout@6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
