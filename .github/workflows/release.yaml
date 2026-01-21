@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yaml
+
+  crates-io:
+    name: Release to crates.io
+    runs-on: ubuntu-latest
+    needs:
+      - check
+    steps:
+      - uses: actions/checkout@6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - run: |
+          echo '${{ secrets.CRATES_IO_API_TOKEN }}' | cargo login
+          cargo publish
+
+  github:
+    name: Release to GitHub
+    strategy:
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+          - macos-latest
+          - macos-latest-large
+    runs-on: ${{ matrix.os }}
+    needs:
+      - check
+    steps:
+      - uses: actions/checkout@6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked
+
+      - name: Rename bins
+        run: |
+          HOST_TUPLE="$(rustc --print=host-tuple)"
+          mkdir release
+          cp "target/release/libautosave.so"    "release/libautosave-$HOST_TUPLE.so"
+          cp "target/release/libautosave.dylib" "release/libautosave-$HOST_TUPLE.dylib"
+          cp "target/release/autosave"          "release/autosave-$HOST_TUPLE"
+          cp "install.sh"                       "release/"
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          draft: true
+          body: |
+            release text

@@ -32,7 +32,7 @@ enum Command {
     },
     /// Run command in specified branch worktree
     Run {
-        #[arg(short, long, help = "New branch name")]
+        #[arg(help = "New branch name")]
         branch: String,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_hint = ValueHint::CommandWithArguments, help = "Command to execute")]
         args: Option<Vec<String>>,

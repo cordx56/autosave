@@ -2,7 +2,6 @@ use anyhow::Context as _;
 use libloading::{Library, Symbol};
 use std::env;
 use std::ffi;
-use std::fs;
 use std::path::Path;
 use std::process::exit;
 use tracing_subscriber::{
@@ -11,7 +10,6 @@ use tracing_subscriber::{
     prelude::*,
 };
 
-const DYLIB_BIN: &[u8] = include_bytes!(env!("DYLIB_PATH"));
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -42,55 +40,42 @@ fn main() {
     let cdylib_path = exe_dir.join(format!("lib{PKG_NAME}.{CDYLIB_EXT}"));
     tracing::debug!("library path: {}", cdylib_path.display());
 
-    for _ in 0..1 {
-        if !cdylib_path.is_file() {
-            tracing::info!(
-                "library not found; output binary to: {}",
-                cdylib_path.display()
-            );
-            write_library(&cdylib_path);
-        }
-        let dylib = match DyLib::load(&cdylib_path) {
-            Ok(lib) => match lib.version() {
-                Ok(version) => {
-                    tracing::debug!("current library version: {version}");
-                    if version == PKG_VERSION {
-                        Some(lib)
-                    } else {
-                        None
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("{e:?}");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!("{e:?}");
-                None
-            }
-        };
-        if let Some(dylib) = dylib {
-            tracing::debug!("enter main function");
-            if let Err(e) = dylib.main(&cdylib_path) {
-                tracing::warn!("{e:?}");
-            }
-        }
-        tracing::info!("error in loading library; remove library and retry");
-        if let Err(e) = fs::remove_file(&cdylib_path).context("failed to remove library") {
-            tracing::error!("{e:?}");
-            exit(1);
-        }
-    }
-    tracing::error!("max retry exceeded");
-    exit(1);
-}
-
-fn write_library(path: &Path) {
-    if let Err(e) = fs::write(path, DYLIB_BIN).context("failed to write dynamic link library") {
-        tracing::error!("{e:?}");
+    if !cdylib_path.is_file() {
+        tracing::error!(
+            "library not found; output binary to: {}",
+            cdylib_path.display()
+        );
         exit(1);
     }
+    let dylib = match DyLib::load(&cdylib_path) {
+        Ok(lib) => match lib.version() {
+            Ok(version) => {
+                tracing::debug!("current library version: {version}");
+                if version == PKG_VERSION {
+                    Some(lib)
+                } else {
+                    tracing::error!("library version not matched with executable version!");
+                    None
+                }
+            }
+            Err(e) => {
+                tracing::error!("{e:?}");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::error!("{e:?}");
+            None
+        }
+    };
+    if let Some(dylib) = dylib {
+        tracing::debug!("enter main function");
+        if let Err(e) = dylib.main(&cdylib_path) {
+            tracing::warn!("{e:?}");
+        }
+    }
+    tracing::info!("error in loading library");
+    exit(1);
 }
 
 struct DyLib {
