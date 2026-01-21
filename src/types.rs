@@ -27,7 +27,9 @@ pub struct WatchListFile {
     pub paths: HashMap<PathBuf, WatchListFileEntry>,
 }
 
+//
 // API
+//
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum ApiResponse<T> {

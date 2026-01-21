@@ -81,7 +81,7 @@ pub fn do_worktree(
         ..Default::default()
     };
     change_watch_list(types::ChangeWatchRequest::Add {
-        path: worktree_path.clone(),
+        path: path.as_ref().to_path_buf(),
         config,
     })
     .context("failed to add worktree to watch list")?;
@@ -139,7 +139,7 @@ pub fn do_worktree(
     let _ = tty_tcsetpgrp(unistd::getpgrp());
 
     change_watch_list(types::ChangeWatchRequest::Remove {
-        path: worktree_path.clone(),
+        path: path.as_ref().to_path_buf(),
     })
     .context("failed to remove worktree from watch list")?;
     git::GitRepo::new(&path)
