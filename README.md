@@ -24,7 +24,10 @@ By default, changes are saved as `autosave commit` to the `tmp/autosave` branch.
 - Supports multiple repositories simultaneously
 - Provides sandbox branches for concurrent development
 
-Supported: Linux and macOS
+Supported:
+
+- Linux: Full features
+- macOS: Sandbox not supported
 
 ## Install
 
