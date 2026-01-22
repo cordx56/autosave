@@ -36,4 +36,5 @@ elif echo ":$PATH:" | grep -q ":$HOME/.cargo/bin:"; then
 else
     BIN_PATH="$HOME/.local/bin"
 fi
-curl -L "https://github.com/cordx56/autosave/releases/latest/download/$CRATE_NAME-$HOST_TUPLE" > "$BIN_PATH/$CRATE_NAME"
+curl -fsSL "https://github.com/cordx56/autosave/releases/latest/download/$CRATE_NAME-$HOST_TUPLE" > "$BIN_PATH/$CRATE_NAME"
+chmod +x "$BIN_PATH/$CRATE_NAME"
