@@ -9,7 +9,7 @@ mod implement;
 pub type TracingReloadHandle = Handle<Box<dyn Layer<Registry> + Send + Sync>, Registry>;
 
 pub struct WatchListEntry {
-    pub configs: Arc<Mutex<Vec<crate::config::Config>>>,
+    pub config: crate::config::Config,
     pub watcher: crate::watcher::RepoWatcher,
 }
 pub type WatchList = HashMap<PathBuf, WatchListEntry>;
@@ -20,7 +20,7 @@ pub struct ApiState {
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct WatchListFileEntry {
-    pub configs: Vec<crate::config::Config>,
+    pub config: crate::config::Config,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct WatchListFile {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::*;
+use anyhow::Context as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::io::AsyncWriteExt;
@@ -31,9 +32,16 @@ impl ApiState {
             .paths
             .into_iter()
             .filter_map(|(k, v)| {
-                let configs = Arc::new(Mutex::new(v.configs));
-                watcher::RepoWatcher::new(&k, configs.clone())
-                    .map(|watcher| (k.clone(), types::WatchListEntry { configs, watcher }))
+                watcher::RepoWatcher::new(&k, v.config.clone())
+                    .map(|watcher| {
+                        (
+                            k.clone(),
+                            types::WatchListEntry {
+                                config: v.config,
+                                watcher,
+                            },
+                        )
+                    })
                     .ok()
             })
             .collect();
@@ -60,8 +68,12 @@ impl ApiState {
             .unwrap()
             .iter()
             .map(|(k, v)| {
-                let configs = v.configs.lock().unwrap().clone();
-                (k.clone(), types::WatchListFileEntry { configs })
+                (
+                    k.clone(),
+                    types::WatchListFileEntry {
+                        config: v.config.clone(),
+                    },
+                )
             })
             .collect();
         let data = types::WatchListFile { paths };
@@ -85,18 +97,10 @@ impl ApiState {
         self.watch_list
             .lock()
             .unwrap()
-            .entry(path.as_ref().to_path_buf())
-            .or_insert({
-                let configs = Arc::new(Mutex::new(vec![]));
-                types::WatchListEntry {
-                    watcher: watcher::RepoWatcher::new(path.as_ref(), configs.clone())?,
-                    configs,
-                }
-            })
-            .configs
-            .lock()
-            .unwrap()
-            .push(config);
+            .insert(path.as_ref().to_path_buf(), {
+                let watcher = watcher::RepoWatcher::new(&path, config.clone())?;
+                types::WatchListEntry { watcher, config }
+            });
         Ok(())
     }
     /// remove specified dir from watch list

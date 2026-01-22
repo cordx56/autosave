@@ -67,10 +67,6 @@ pub fn kill() -> anyhow::Result<()> {
     }
 }
 
-#[cfg(target_os = "linux")]
-const PRELOAD: &str = "LD_PRELOAD";
-#[cfg(target_os = "macos")]
-const PRELOAD: &str = "DYLD_INSERT_LIBRARIES";
 pub const WORKTREES_DIR_NAME: &str = "worktrees";
 
 fn tty_tcsetpgrp(pid: unistd::Pid) -> anyhow::Result<()> {
@@ -82,7 +78,6 @@ fn tty_tcsetpgrp(pid: unistd::Pid) -> anyhow::Result<()> {
 
 /// Exec Git worktree process
 pub fn do_worktree(
-    cdylib_path: impl AsRef<Path>,
     args: &[String],
     branch: impl AsRef<str>,
     path: impl AsRef<Path>,
@@ -95,7 +90,7 @@ pub fn do_worktree(
         ..Default::default()
     };
     change_watch_list(types::ChangeWatchRequest::Add {
-        path: path.as_ref().to_path_buf(),
+        path: worktree_path.clone(),
         config,
     })
     .context("failed to add worktree to watch list")?;
@@ -113,17 +108,7 @@ pub fn do_worktree(
     let child_pid = match unsafe { unistd::fork().context("failed to start child process")? } {
         unistd::ForkResult::Parent { child } => child,
         unistd::ForkResult::Child => {
-            let gitdir = path.as_ref().join(".git/worktrees").join(&worktree_name);
-
-            unsafe {
-                env::set_var("REDIRECT_FROM", path.as_ref());
-                env::set_var("REDIRECT_TO", &worktree_path);
-                env::set_var("REDIRECT_SKIP_GITIGNORE", "1");
-                // Set Git environment variables for worktree context
-                env::set_var("GIT_DIR", &gitdir);
-                env::set_var("GIT_WORK_TREE", &worktree_path);
-                env::set_var(PRELOAD, cdylib_path.as_ref());
-            }
+            env::set_current_dir(&worktree_path).context("failed to change working dir")?;
 
             let pid = unistd::Pid::from_raw(0);
             unistd::setpgid(pid, pid).context("failed to set child's process group")?;
@@ -154,7 +139,7 @@ pub fn do_worktree(
     let _ = tty_tcsetpgrp(unistd::getpgrp());
 
     change_watch_list(types::ChangeWatchRequest::Remove {
-        path: path.as_ref().to_path_buf(),
+        path: worktree_path.clone(),
     })
     .context("failed to remove worktree from watch list")?;
     git::GitRepo::new(&path)
@@ -180,10 +165,9 @@ pub fn setup_worktree(
 }
 /// Get Git worktree path
 pub fn worktree_path(path: impl AsRef<Path>, branch: impl AsRef<str>) -> anyhow::Result<PathBuf> {
-    let replaced = path
-        .as_ref()
-        .canonicalize()
-        .context("failed to get absolute path")?
+    let repo = git::GitRepo::new(&path).context("failed to setup Git repo")?;
+    let repo_root = repo.get_repo_root();
+    let replaced = repo_root
         .components()
         .filter_map(|v| match v {
             Component::Normal(v) => Some(v.to_string_lossy()),

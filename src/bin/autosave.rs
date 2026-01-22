@@ -1,29 +1,41 @@
 use anyhow::Context as _;
-use libloading::{Library, Symbol};
+use clap::{Parser, Subcommand, ValueHint};
 use std::env;
-use std::ffi;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::exit;
-use tracing_subscriber::{
-    Layer,
-    filter::{EnvFilter, LevelFilter},
-    prelude::*,
-};
 
-const PKG_NAME: &str = env!("CARGO_PKG_NAME");
-const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+use autosave::*;
 
-#[cfg(target_os = "linux")]
-const CDYLIB_EXT: &str = "so";
-#[cfg(target_os = "macos")]
-const CDYLIB_EXT: &str = "dylib";
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// List directories in watch list
+    List,
+    /// Remove specified directory from watch list
+    Remove {
+        #[arg(long, short, value_hint = ValueHint::DirPath)]
+        path: Option<PathBuf>,
+        #[arg(long, help = "Remove all path from watch list")]
+        all: bool,
+    },
+    /// Run command in specified branch worktree
+    Run {
+        #[arg(help = "New branch name")]
+        branch: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_hint = ValueHint::CommandWithArguments, help = "Command to execute")]
+        args: Option<Vec<String>>,
+    },
+    /// Kill autosave daemon
+    Kill,
+}
 
 fn main() {
-    unsafe {
-        env::remove_var("REDIRECT_FROM");
-        env::remove_var("REDIRECT_TO");
-    }
-
+    use tracing_subscriber::{EnvFilter, filter::LevelFilter, prelude::*};
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_filter(
@@ -32,89 +44,119 @@ fn main() {
                 .from_env_lossy(),
         )
         .boxed();
-    let (layer, _reload_handle) = tracing_subscriber::reload::Layer::new(layer);
+    let (layer, reload_handle) = tracing_subscriber::reload::Layer::new(layer);
     tracing_subscriber::registry().with(layer).init();
 
-    let exe_dir = match env::current_exe().context("failed to get executable path") {
-        Ok(v) => v.parent().unwrap().to_path_buf(),
+    let parsed = Cli::parse();
+
+    let daemon_check = match daemon::check_daemon() {
+        Ok(v) => v,
         Err(e) => {
             tracing::error!("{e:?}");
             exit(1);
         }
     };
-    let cdylib_path = exe_dir.join(format!("lib{PKG_NAME}.{CDYLIB_EXT}"));
-    tracing::debug!("library path: {}", cdylib_path.display());
-
-    if !cdylib_path.is_file() {
-        tracing::error!(
-            "library not found; output binary to: {}",
-            cdylib_path.display()
-        );
-        exit(1);
+    if daemon_check {
+        tracing::info!("daemon is already running");
+    } else {
+        tracing::info!("daemon is not running; start daemon");
+        if let Err(e) = daemon::start_daemon(&reload_handle) {
+            tracing::error!("{e:?}");
+            exit(1);
+        }
     }
-    let dylib = match DyLib::load(&cdylib_path) {
-        Ok(lib) => match lib.version() {
-            Ok(version) => {
-                tracing::debug!("current library version: {version}");
-                if version == PKG_VERSION {
-                    Some(lib)
-                } else {
-                    tracing::error!("library version not matched with executable version!");
-                    None
-                }
-            }
-            Err(e) => {
-                tracing::error!("{e:?}");
-                None
-            }
-        },
+
+    let current_dir = match env::current_dir().context("failed to get current dir") {
+        Ok(v) => v,
         Err(e) => {
             tracing::error!("{e:?}");
-            None
+            exit(1);
         }
     };
-    if let Some(dylib) = dylib {
-        tracing::debug!("enter main function");
-        if let Err(e) = dylib.main(&cdylib_path) {
-            tracing::warn!("{e:?}");
+
+    match parsed.command {
+        None => {
+            tracing::info!("add current dir to the watch list");
+
+            let resp = client::change_watch_list(types::ChangeWatchRequest::Add {
+                path: current_dir,
+                config: config::Config::default(),
+            })
+            .context("failed to add current dir to watch list");
+            if let Err(e) = resp {
+                tracing::error!("{e:?}");
+                exit(1);
+            }
+            tracing::info!("current dir added to the watch list");
+        }
+        Some(Command::List) => {
+            tracing::info!("list current paths in the watch list");
+            let resp = client::get_watch_list().context("failed to get current watch list");
+            match resp {
+                Ok(paths) => {
+                    for path in paths {
+                        println!("{}", path.display());
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("{e:?}");
+                    exit(1);
+                }
+            }
+        }
+        Some(Command::Remove { path, all }) => {
+            let paths = if all {
+                let resp = client::get_watch_list().context("failed to get current watch list");
+                match resp {
+                    Ok(paths) => paths,
+                    Err(e) => {
+                        tracing::error!("{e:?}");
+                        exit(1);
+                    }
+                }
+            } else {
+                match path {
+                    Some(v) => vec![v],
+                    None => vec![current_dir],
+                }
+            };
+            tracing::info!("remove path(s) from the watch list: {paths:?}");
+            for path in paths {
+                let resp = client::change_watch_list(types::ChangeWatchRequest::Remove { path })
+                    .context("failed to remove dir to watch list");
+                if let Err(e) = resp {
+                    tracing::error!("{e:?}");
+                    exit(1);
+                }
+            }
+            tracing::info!("successfully deleted the path from the watch list");
+        }
+        Some(Command::Run { branch, args }) => {
+            let args = match args {
+                Some(v) => v,
+                None => match env::var("SHELL") {
+                    Ok(v) => vec![v],
+                    Err(_) => {
+                        tracing::error!("$SHELL is not set");
+                        exit(1);
+                    }
+                },
+            };
+            match client::do_worktree(&args, &branch, &current_dir) {
+                Ok(v) => exit(v),
+                Err(e) => {
+                    tracing::error!("{e:?}");
+                    exit(1);
+                }
+            };
+        }
+        Some(Command::Kill) => {
+            let resp = client::kill().context("failed to kill the daemon");
+            if let Err(e) = resp {
+                tracing::error!("{e:?}");
+                exit(1);
+            }
         }
     }
-    tracing::info!("error in loading library");
-    exit(1);
-}
-
-struct DyLib {
-    cdylib: Library,
-}
-
-impl DyLib {
-    fn load(library_path: &Path) -> anyhow::Result<Self> {
-        let cdylib = unsafe { Library::new(library_path).context("failed to load library") }?;
-        Ok(Self { cdylib })
-    }
-
-    pub fn version(&self) -> anyhow::Result<String> {
-        unsafe {
-            let func: Symbol<unsafe extern "C" fn() -> *mut u8> = self
-                .cdylib
-                .get(b"version")
-                .context("failed to load version function")?;
-            let ptr = func();
-            Ok(ffi::CString::from_raw(ptr as *mut ffi::c_char)
-                .to_string_lossy()
-                .to_string())
-        }
-    }
-    pub fn main(&self, cdylib_path: &Path) -> anyhow::Result<()> {
-        let cdylib_str = cdylib_path.to_string_lossy().to_string();
-        let cdylib_cstr = unsafe { ffi::CStr::from_ptr(cdylib_str.as_ptr() as *const ffi::c_char) };
-        unsafe {
-            let func: Symbol<unsafe extern "C" fn(*const ffi::c_char)> =
-                self.cdylib
-                    .get(b"main")
-                    .context("failed to load main function")?;
-            func(cdylib_cstr.as_ptr());
-            exit(0);
-        }
-    }
+    exit(0);
 }

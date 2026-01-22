@@ -5,7 +5,7 @@ use git2::{
     WorktreeAddOptions, WorktreePruneOptions,
 };
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -38,6 +38,10 @@ impl GitRepo {
             }
         })?;
         Ok(Self(repo))
+    }
+
+    pub fn get_repo_root(&self) -> PathBuf {
+        self.0.path().parent().unwrap().to_path_buf()
     }
 
     fn head(&self) -> anyhow::Result<Reference<'_>> {

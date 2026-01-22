@@ -1,6 +1,6 @@
 [package]
 name = "autosave"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["cordx56 <cordx56@cordx.cx>"]
 description = "Automatically save all your changes to the repository"
@@ -9,9 +9,6 @@ repository = "https://github.com/cordx56/autosave"
 license = "MPL-2.0"
 keywords = ["git", "backup", "sandbox", "llm"]
 categories = ["command-line-utilities"]
-
-[lib]
-crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -28,6 +25,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json"] }
 nix = { version = "0.30", features = ["signal", "process", "term"] }
-libloading = "0.9"
-libc = "0.2"
-ctor = "0.6"
+#libloading = "0.9"
+#libc = "0.2"
+#ctor = "0.6"
