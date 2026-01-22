@@ -110,6 +110,11 @@ pub fn do_worktree(
         unistd::ForkResult::Child => {
             env::set_current_dir(&worktree_path).context("failed to change working dir")?;
 
+            // Ignore SIGTTOU before any TTY operations to prevent blocking on macOS
+            unsafe {
+                let _ = signal::signal(signal::Signal::SIGTTOU, signal::SigHandler::SigIgn);
+            }
+
             let pid = unistd::Pid::from_raw(0);
             unistd::setpgid(pid, pid).context("failed to set child's process group")?;
 
