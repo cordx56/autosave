@@ -24,27 +24,18 @@ By default, changes are saved as `autosave commit` to the `tmp/autosave` branch.
 - Supports multiple repositories simultaneously
 - Provides sandbox branches for concurrent development
 
-Supported:
-
-- Linux: Full features
-- macOS: Sandbox not supported
+Supported: Linux, macOS
 
 ## Install
-
-Usually, you can't install autosave by executing only `cargo install autosave` because autosave uses dynamically linked libraries.
-
-Please use the install script:
 
 ```bash
 curl -L https://github.com/cordx56/autosave/releases/latest/download/install.sh | sh
 ```
 
-Or, to build from source:
+Or, build from source:
 
 ```bash
-git clone https://github.com/cordx56/autosave.git
-cd autosave
-./install.sh
+cargo install autosave --locked
 ```
 
 ## Usage
@@ -103,6 +94,8 @@ autosave run terminal-1 claude "Implement API"
 # in another terminal
 autosave run terminal-2 claude "Implement UI"
 ```
+
+After exiting the process, you can merge your sandboxed branch.
 
 ## Uninstall
 
