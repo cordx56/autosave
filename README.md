@@ -9,12 +9,12 @@
     </p>
 </div>
 
-autosave watches file changes and automatically saves changed files to the local Git repository as a commit.
-By default, changes are saved as `autosave commit` to the `tmp/autosave` branch.
+autosave watches for file changes and automatically saves changed files to the local Git repository as a commit.
+By default, changes are committed with the message `autosave commit` to the `tmp/autosave` branch.
 
 > [!WARNING]
 > The author is not responsible for any data loss.
-> Please backup your local changes to remote repository frequently.
+> Please back up your local changes to remote repository frequently.
 > If you find any bugs, please report them as an issue.
 
 ## Features
@@ -102,7 +102,7 @@ After exiting the process, you can merge your sandboxed branch.
 To uninstall autosave, remove the binary:
 
 ```bash
-rm $(which autosave)
+rm "$(which autosave)"
 ```
 
 ## License
