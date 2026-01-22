@@ -88,6 +88,9 @@ All changes are automatically committed to the sandbox branch, keeping your orig
 For example, you can run multiple development sessions concurrently on different branches:
 
 ```bash
+# this starts $SHELL in the Git sandbox
+autosave run shell
+
 # in one terminal
 autosave run terminal-1 claude "Implement API"
 
