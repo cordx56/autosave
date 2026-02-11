@@ -179,7 +179,7 @@ pub fn worktree_path(path: impl AsRef<Path>, branch: impl AsRef<str>) -> anyhow:
             _ => None,
         })
         .collect::<Vec<_>>()
-        .join("%");
+        .join("-");
     let worktree_dir = daemon::cache_dir()?
         .join(WORKTREES_DIR_NAME)
         .join(&replaced)
